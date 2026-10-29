@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    container_name: x7-medicore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medicore
+      POSTGRES_USER: medicore_user
+      POSTGRES_PASSWORD: dev_only_change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - medicore_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medicore_user -d medicore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  medicore_pgdata:
