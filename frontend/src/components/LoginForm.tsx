@@ -312,3 +312,4 @@ export function LoginForm({ portal, defaultTab = "staff" }: LoginFormProps) {
     </div>
   );
 }
+

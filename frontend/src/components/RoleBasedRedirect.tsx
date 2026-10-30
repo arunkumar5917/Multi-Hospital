@@ -22,3 +22,4 @@ export function RoleBasedRedirect() {
 
   return <Navigate to="/" replace />;
 }
+

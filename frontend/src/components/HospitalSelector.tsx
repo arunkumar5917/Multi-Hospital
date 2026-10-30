@@ -173,3 +173,4 @@ export function HospitalSelector({ onHospitalSelected }: HospitalSelectorProps) 
     </div>
   );
 }
+

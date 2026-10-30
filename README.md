@@ -1,41 +1,61 @@
-# X7 MediCore HMS — Advanced Multi-Hospital Login & Authentication System
+# X7 MediCore HMS — Multi-Hospital Global Patient Identity & Complete Medical History Management
 
-A production-grade Multi-Hospital Healthcare Management System featuring federated multi-facility login, Global Registration Number (GRN) patient identity, Argon2id security, Alembic migrations, and role-based access control (RBAC).
+A production-grade, enterprise-ready Multi-Hospital Healthcare Management System featuring centralized **Global Patient Identity (GRN)**, multi-facility clinical history aggregation, private diagnostic scan storage, auditable treatments and prescriptions, Argon2id security, Alembic migrations, and role-based access control (RBAC).
 
 ---
 
 ## Key Features
 
-1. **Hospital Selection First Step**:
-   - The public entry page (`/`) requires hospital facility selection retrieved dynamically via FastAPI (`GET /api/v1/hospitals`).
-   - Facility search by name, code (e.g. `HOSP-001`), and location.
-   - Real-time active status validation prevents login to inactive/maintenance facilities.
-2. **Dedicated Portals & Separate Login URLs**:
-   - **Public Landing & Facility Selection**: `/`
-   - **Hospital Admin Portal**: `/hospital-admin/login`
-   - **Doctors, Staff & Patients Portal**: `/login` (with tabbed/GRN access)
-   - **Super Admin Governance Console**: `/super-admin/login` (isolated; never exposed on public facility directory)
-3. **Global Patient Identity System (GRN)**:
-   - Permanent GRN (e.g., `XM-GRN-000001`) connects to global patient records across hospital visits.
-   - Dual patient login: Registered email **or** permanent GRN + password.
-   - Verified GRN badge and patient health passport view.
-4. **Hardened Security & Rate Limiting**:
-   - **Password Hashing**: Argon2id via `pwdlib[argon2]`.
-   - **Brute-Force Protection**: 5 consecutive failed login attempts trigger a 15-minute account lockout.
-   - **Single-Use Password Reset**: Expiring 30-minute recovery tokens with immediate session revocation.
-   - **Audit Logs**: Platform-wide immutable audit trail (`authentication_audit_logs`).
-   - **Hospital Membership Verification**: Rejects attempts to sign into unauthorized facilities.
-5. **Database Migrations**:
-   - Managed with **Alembic** (`backend/alembic/`).
+1. **Global Patient Registration Number (GRN)**:
+   - Concurrency-safe, sequential auto-generation of permanent patient identity numbers (e.g. `XM-GRN-000001`).
+   - Central database storage in PostgreSQL / SQLite; never creates duplicate GRNs for registered patients.
+   - Dual authentication for patients: registered email **or** GRN + secure password.
+   - Global patient search across all affiliated network hospitals by GRN, full name, phone number, and local code.
+
+2. **Centralized Multi-Hospital Medical History**:
+   - Unified cross-facility clinical records linking GRN, patient, hospital, doctor, diagnoses, past surgeries, chronic illnesses, and known allergies.
+   - Dated historical versions and append-only clinical event timeline preserving original records.
+   - Interactive chronological timeline across all patient visits at any network hospital.
+
+3. **New Treatment Management**:
+   - Comprehensive clinical encounter recording for doctors and clinical staff.
+   - Fields: auto-generated Treatment ID (e.g. `TRT-2026-0001`), patient GRN, facility, doctor, visit timestamp, chief complaint, symptoms, clinical observations, diagnosis, treatment description, procedures performed, dynamic prescriptions list, follow-up instructions, next appointment date, and status (`Scheduled`, `In Progress`, `Completed`, `Follow-up Required`, `Referred`, `Cancelled`).
+   - Automatically writes to the patient's centralized medical history and logs access audit trails.
+
+4. **Past Treatment History & Audit Trail**:
+   - Chronological review of all previous treatments with facility tags and doctor specializations.
+   - Read-only historical records with auditable clinical correction/observation notes.
+
+5. **Diagnostic Scans & Medical Document Upload**:
+   - Upload and attach medical files to specific treatments and GRNs (JPG, PNG, PDF, DICOM up to 20MB).
+   - Categories: `X-ray`, `MRI`, `CT Scan`, `Ultrasound`, `Blood Test Report`, `Prescription`, `Discharge Summary`, `Medical Certificate`, `Clinical Photograph`, `Other Medical Documents`.
+   - Private file storage in `backend/storage/attachments/` with secure preview and streaming download.
+
+6. **Unified Patient Health Portal**:
+   - Permanent GRN passport card with one-click clipboard copy.
+   - Chronic conditions and drug allergy warning badges.
+   - Comprehensive multi-hospital chronological medical timeline with category filters.
+   - Diagnostic scans and lab reports visual gallery with image previews and PDF viewers.
+   - Connected hospital network and cross-hospital consent status.
+
+7. **Cross-Hospital Linking & Consent Management**:
+   - Clinicians can look up patients from other network facilities and record cross-hospital consent.
+   - Full HIPAA-compliant access audit logging for all medical record views and downloads.
+
+8. **Security & RBAC**:
+   - Multi-tenant hospital isolation with separate portals (`/`, `/hospital-admin/login`, `/login`, `/super-admin/login`).
+   - Argon2id password hashing via `pwdlib[argon2]`.
+   - Brute-force rate limiting (5 consecutive failures = 15-minute lockout).
 
 ---
 
 ## Architecture & Technology Stack
 
 - **Frontend**: React 18, TypeScript, Vite, React Router 6, Lucide React
-- **Backend**: Python 3.11+ / FastAPI, Pydantic v2, PyJWT, Argon2
+- **Backend**: Python 3.11+ / FastAPI, Pydantic v2, PyJWT, Argon2, python-multipart
 - **Database**: PostgreSQL / SQLite (with auto-detection via `DATABASE_URL`)
 - **ORM & Migrations**: SQLAlchemy 2.0 + Alembic
+- **Private Storage**: Secure local/cloud private directory for scans and reports
 
 ---
 
@@ -69,6 +89,13 @@ npm run dev
 
 - Web UI: `http://localhost:5173`
 
+### Run System Verification Test Suite
+
+```bash
+# Run the 12-point comprehensive verification test suite
+backend/.venv/bin/python backend/test_suite.py
+```
+
 ---
 
 ## 2. Demo User Credentials
@@ -86,8 +113,8 @@ npm run dev
 | **Lab Technician** | HOSP-001 (Chennai) | `lab@x7medicore.local` | `/login` |
 | **Pharmacist** | HOSP-001 (Chennai) | `pharmacy@x7medicore.local` | `/login` |
 | **Billing Staff** | HOSP-001 (Chennai) | `billing@x7medicore.local` | `/login` |
-| **Patient 1** | HOSP-001 (Chennai) | `patient@x7medicore.local` **or** `XM-GRN-000001` | `/login?tab=patient` |
-| **Patient 2** | HOSP-002 (Bengaluru) | `patient2@x7medicore.local` **or** `XM-GRN-000002` | `/login?tab=patient` |
+| **Patient 1** | HOSP-001 & HOSP-002 | `patient@x7medicore.local` **or** `XM-GRN-000001` | `/login?tab=patient` |
+| **Patient 2** | HOSP-002 | `patient2@x7medicore.local` **or** `XM-GRN-000002` | `/login?tab=patient` |
 
 ---
 
@@ -98,42 +125,37 @@ npm run dev
 | `HOSP-001` | X7 City Central Hospital | Chennai, Tamil Nadu | **Active** |
 | `HOSP-002` | X7 Memorial Specialty Hospital | Bengaluru, Karnataka | **Active** |
 | `HOSP-003` | X7 Metro Healthcare Clinic | Hyderabad, Telangana | **Active** |
-| `HOSP-004` | X7 Regional Care Center (Maintenance) | Coimbatore, Tamil Nadu | *Inactive / Maintenance* |
 
 ---
 
-## 4. API Endpoints
+## 4. API Endpoints Overview
 
-### Hospitals & Federation
-- `GET /api/v1/hospitals`: Public active facility list (or `?include_inactive=true` for Super Admin)
-- `POST /api/v1/hospitals`: Super Admin registration of new facilities
-- `PATCH /api/v1/hospitals/{id}`: Super Admin activate/deactivate facilities
+### Global Patient Identity & Registration
+- `POST /api/v1/patients/register` — Register a new patient and generate a unique permanent GRN.
+- `GET /api/v1/patients/search?query=...` — Search across all hospitals by GRN, name, or phone.
+- `GET /api/v1/patients/{grn}` — Fetch global patient profile and linkage status.
+- `GET /api/v1/patients/{grn}/hospitals` — List affiliated hospitals for a patient.
+- `POST /api/v1/patients/{grn}/link-hospital` — Cross-link a patient to a new hospital with consent.
 
-### Authentication & Sessions
-- `POST /api/v1/auth/login`: Multi-tenant login validating credentials, portal, and hospital code
-- `POST /api/v1/auth/refresh`: Exchange refresh token for new access token
-- `POST /api/v1/auth/logout`: Revoke active session
-- `GET /api/v1/auth/me`: Current authenticated user identity
-- `POST /api/v1/auth/forgot-password`: Generate single-use password recovery token
-- `POST /api/v1/auth/reset-password`: Set new password using valid reset token
+### Centralized Medical History & Timeline
+- `GET /api/v1/patients/{grn}/medical-history` — Complete conditions, allergies, and diagnoses.
+- `GET /api/v1/patients/{grn}/medical-history/timeline` — Chronological unified timeline.
+- `POST /api/v1/patients/{grn}/conditions` — Add chronic condition.
+- `POST /api/v1/patients/{grn}/allergies` — Document drug or environmental allergy.
 
-### Platform Governance & Clinical
-- `GET /api/v1/admin/audit-logs`: Review security and auth audit logs (Super Admin only)
-- `GET /api/v1/patient/profile`: Patient health profile and permanent GRN
-- `GET /api/v1/dashboard/summary`: Role and hospital-scoped operational metrics
-- CRUD endpoints: `/api/v1/patients`, `/doctors`, `/appointments`, `/treatments`, `/lab-reports`, `/prescriptions`, `/invoices`
+### Treatments & Prescriptions
+- `POST /api/v1/treatments` — Record clinical treatment encounter with dynamic prescriptions.
+- `GET /api/v1/treatments` — List authorized treatments (filters by hospital/patient).
+- `GET /api/v1/treatments/{id}` — Full clinical treatment details.
+- `PATCH /api/v1/treatments/{id}` — Update treatment with auditable reason.
+- `POST /api/v1/treatments/{id}/notes` — Append clinical observation note.
 
----
+### Diagnostic Scans & Attachments
+- `POST /api/v1/treatments/{id}/attachments` — Upload medical scan/document (multipart form).
+- `GET /api/v1/attachments/{id}` — Secure streaming file download/preview.
+- `GET /api/v1/patients/{grn}/attachments` — All patient scans and documents gallery.
 
-## 5. Database Schema & Tables
-
-- `hospitals`: Multi-facility network nodes
-- `users`: Authenticated user identities and roles
-- `user_hospital_memberships`: Facility membership mapping
-- `global_patients`: Federated permanent GRN registries
-- `patient_accounts`: Link between users and global patient identity
-- `user_sessions`: Active refresh token sessions
-- `login_attempts`: Rate limiting and lockout tracker
-- `authentication_audit_logs`: Security audit logs
-- `password_reset_tokens`: Expiring single-use reset tokens
-- `patients`, `doctors`, `appointments`, `treatments`, `lab_reports`, `prescriptions`, `invoices`: Clinical models
+### Consents & Audit Trail
+- `GET /api/v1/patients/{grn}/consents` — List active patient data-sharing consents.
+- `POST /api/v1/patients/{grn}/consents` — Record patient consent update.
+- `GET /api/v1/patients/{grn}/access-logs` — Audit log of clinicians who accessed this record.
