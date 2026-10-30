@@ -92,7 +92,7 @@ npm run dev
 ### Run System Verification Test Suite
 
 ```bash
-# Run the 12-point comprehensive verification test suite
+# Run the 18-point comprehensive verification test suite
 backend/.venv/bin/python backend/test_suite.py
 ```
 
@@ -151,9 +151,23 @@ backend/.venv/bin/python backend/test_suite.py
 - `POST /api/v1/treatments/{id}/notes` — Append clinical observation note.
 
 ### Diagnostic Scans & Attachments
-- `POST /api/v1/treatments/{id}/attachments` — Upload medical scan/document (multipart form).
-- `GET /api/v1/attachments/{id}` — Secure streaming file download/preview.
-- `GET /api/v1/patients/{grn}/attachments` — All patient scans and documents gallery.
+- `POST /api/v1/treatments/{id}/documents` — Upload medical scan/document (multipart form).
+- `POST /api/v1/treatments/{id}/attachments` — Legacy upload endpoint for attachments.
+- `GET /api/v1/documents/{id}` — Secure streaming file download/preview.
+- `DELETE /api/v1/documents/{id}` — Delete medical document with permission check.
+- `GET /api/v1/patients/{grn}/documents` — All patient scans and documents gallery.
+
+### Patient Profile, Health Analysis & QR Passport
+- `GET /api/v1/patients/me` — Retrieve logged-in patient's full biodata and insurance.
+- `PATCH /api/v1/patients/me` — Update patient demographics and insurance coverage.
+- `POST /api/v1/patients/{grn}/photo` — Upload and update patient profile picture.
+- `GET /api/v1/patients/{grn}/photo` — Retrieve streaming patient profile photo.
+- `GET /api/v1/patients/{grn}/health-analysis` — Full health analysis, vitals trends & lab reports with reference ranges.
+- `POST /api/v1/patients/{grn}/vitals` — Log vital signs (BP, pulse, temp, SpO2, weight, height, BMI).
+- `GET /api/v1/patients/{grn}/family-contacts` — List family and emergency contacts.
+- `POST /api/v1/patients/{grn}/family-contacts` — Register new family contact.
+- `DELETE /api/v1/family-contacts/{id}` — Remove family contact.
+- `GET /api/v1/patients/{grn}/qr-code` — Generate crisp vector SVG QR code for permanent patient GRN.
 
 ### Consents & Audit Trail
 - `GET /api/v1/patients/{grn}/consents` — List active patient data-sharing consents.
