@@ -1,47 +1,231 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Activity, ArrowRight, Bell, Building2, ClipboardList, FileText, HeartPulse, Hospital, LockKeyhole, LogOut, Plus, Search, ShieldCheck, Stethoscope, Users } from "lucide-react";
+import { useState } from "react";
+import { Link, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { HospitalSelector } from "./components/HospitalSelector";
+import { PortalSelector } from "./components/PortalSelector";
+import { LoginForm } from "./components/LoginForm";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { SuperAdminDashboard } from "./components/SuperAdminDashboard";
+import { PatientDashboard } from "./components/PatientDashboard";
+import { StaffDashboard } from "./components/StaffDashboard";
+import { Hospital } from "./types";
+import { ShieldCheck, Lock, Activity, HeartPulse } from "lucide-react";
 
-const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-type Portal = "super_admin" | "hospital_admin" | "general";
-type User = { id:number; email:string; full_name:string; role:string; hospital_id?:string|null };
-type Summary = { hospitals:number; patients:number; doctors:number; staff:number; appointments:number; active_treatments:number; invoices_total:number };
-const configs = {
-  super_admin: { title:"Super Admin Portal", subtitle:"Monitor and manage the healthcare ecosystem.", tone:"violet", icon:ShieldCheck },
-  hospital_admin: { title:"Hospital Admin Portal", subtitle:"Manage your hospital's day-to-day operations.", tone:"blue", icon:Hospital },
-  general: { title:"Healthcare User Login", subtitle:"Secure access for doctors, staff, and patients.", tone:"pink", icon:HeartPulse }
-};
-function readUser():User|null { try { return JSON.parse(localStorage.getItem("x7_user") || "null"); } catch { return null; } }
-function Login({portal}:{portal:Portal}) {
-  const cfg=configs[portal], Icon=cfg.icon, [email,setEmail]=useState(""), [password,setPassword]=useState(""), [error,setError]=useState(""), [busy,setBusy]=useState(false);
-  const nav=useNavigate();
-  async function submit(e:FormEvent) {
-    e.preventDefault(); setBusy(true); setError("");
-    try {
-      const r=await fetch(`${API}/api/v1/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password,portal})});
-      const data=await r.json(); if(!r.ok) throw new Error(data.detail || "Login failed");
-      localStorage.setItem("x7_token",data.access_token); localStorage.setItem("x7_user",JSON.stringify(data.user)); nav(data.dashboard_path);
-    } catch(err) { setError(err instanceof Error ? err.message : "Cannot connect to API"); } finally { setBusy(false); }
-  }
-  return <div className="login-page"><aside className={`login-brand ${cfg.tone}`}><div className="logo"><span>X7</span><div><b>MEDICORE</b><small>HOSPITAL MANAGEMENT SYSTEM</small></div></div><div className="brand-copy"><span className="eyebrow">CONNECTED HEALTHCARE</span><h1>Care connected.<br/><em>Records protected.</em></h1><p>A unified platform for hospital operations, patient care, and trusted medical information.</p><div className="brand-points"><span>✓ Role-based access</span><span>✓ Connected patient history</span><span>✓ Secure healthcare workflows</span></div></div><small className="brand-foot">X7 MediCore HMS · Educational MVP</small></aside><main className="login-main"><div className="secure-label"><LockKeyhole size={15}/> SECURE SIGN IN</div><section className="login-card"><div className={`login-icon ${cfg.tone}`}><Icon size={27}/></div><span className="eyebrow">WELCOME TO X7 MEDICORE</span><h2>{cfg.title}</h2><p>{cfg.subtitle}</p><form onSubmit={submit}><label htmlFor="email">Email address</label><input id="email" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" placeholder="you@hospital.com" required/><label htmlFor="password">Password</label><input id="password" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" placeholder="Enter password" required/>{error&&<div className="error">{error}</div>}<button className={`primary ${cfg.tone}`} disabled={busy}>{busy?"Signing in…":"Sign in securely"} <ArrowRight size={17}/></button></form><div className="secure-note"><ShieldCheck size={17}/> Access is checked by the backend against your assigned role.</div><div className="switches"><span>Other portals</span><div>{portal!=="super_admin"&&<Link to="/super-admin/login">Super Admin</Link>}{portal!=="hospital_admin"&&<Link to="/hospital-admin/login">Hospital Admin</Link>}{portal!=="general"&&<Link to="/login">General users</Link>}</div></div></section></main></div>;
+function PublicHome() {
+  const { selectedHospital, setSelectedHospital, isAuthenticated } = useAuth();
+  const [step, setStep] = useState<"select_hospital" | "select_portal">(() =>
+    selectedHospital ? "select_portal" : "select_hospital"
+  );
+
+  const handleHospitalChosen = (hospital: Hospital) => {
+    setSelectedHospital(hospital);
+    setStep("select_portal");
+  };
+
+  const handleChangeHospital = () => {
+    setSelectedHospital(null);
+    setStep("select_hospital");
+  };
+
+  return (
+    <div className="public-home-page">
+      {/* Navigation Header */}
+      <header className="public-nav-header">
+        <div className="logo brand-logo">
+          <div className="logo-symbol">
+            <span>X7</span>
+          </div>
+          <div>
+            <b>MEDICORE HMS</b>
+            <small>MULTI-HOSPITAL HEALTHCARE NETWORK</small>
+          </div>
+        </div>
+
+        <div className="header-right-actions">
+          <div className="status-indicator">
+            <span className="pulse-dot"></span>
+            <span>Network Online</span>
+          </div>
+          <Link to="/super-admin/login" className="super-admin-direct-link" title="Super Admin Portal">
+            <ShieldCheck size={16} /> Platform Admin
+          </Link>
+        </div>
+      </header>
+
+      {/* Main Interactive Stage */}
+      <main className="public-content-container">
+        {step === "select_hospital" || !selectedHospital ? (
+          <HospitalSelector onHospitalSelected={handleHospitalChosen} />
+        ) : (
+          <PortalSelector hospital={selectedHospital} onChangeHospital={handleChangeHospital} />
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="public-footer">
+        <div className="footer-content">
+          <p>
+            <strong>X7 MediCore HMS</strong> &bull; Enterprise Multi-Hospital Healthcare Information System.
+          </p>
+          <div className="footer-links">
+            <span><Lock size={13} /> 256-bit AES / TLS 1.3 Encryption</span>
+            <span><Activity size={13} /> Global Patient Identity (GRN)</span>
+            <span><HeartPulse size={13} /> Strict HIPAA / Scoped RBAC</span>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
 }
-function Landing(){return <main className="landing"><div className="logo"><span>X7</span><div><b>MEDICORE</b><small>HOSPITAL MANAGEMENT SYSTEM</small></div></div><span className="eyebrow">ONE PLATFORM · SEPARATE ENTRY POINTS</span><h1>Welcome to <em>X7 MediCore</em></h1><p>Select your authorized portal.</p><div className="portal-cards">{[{to:"/super-admin/login",title:"Super Admin",desc:"Manage the complete healthcare network",icon:ShieldCheck,tone:"violet"},{to:"/hospital-admin/login",title:"Hospital Admin",desc:"Manage an assigned hospital",icon:Building2,tone:"blue"},{to:"/login",title:"Doctors, Staff & Patients",desc:"Open your role-based workspace",icon:Users,tone:"pink"}].map(x=>{const I=x.icon;return <Link to={x.to} className="portal-card" key={x.to}><div className={`login-icon ${x.tone}`}><I/></div><h2>{x.title}</h2><p>{x.desc}</p><b>Open portal <ArrowRight size={15}/></b></Link>})}</div><small>Use synthetic data only in this educational project.</small></main>}
-const paths:Record<string,string>={super_admin:"/super-admin/dashboard",hospital_admin:"/hospital-admin/dashboard",doctor:"/doctor/dashboard",patient:"/patient/dashboard",nurse:"/staff/dashboard",lab_technician:"/lab/dashboard",pharmacist:"/pharmacy/dashboard",billing_staff:"/billing/dashboard",family_member:"/family/dashboard"};
-const routeRoles:Record<string,string>={...Object.fromEntries(Object.entries(paths).map(([r,p])=>[p,r]))};
-function Dashboard(){const loc=useLocation(),nav=useNavigate(),[user,setUser]=useState<User|null>(readUser()),[summary,setSummary]=useState<Summary|null>(null),[module,setModule]=useState("Overview"),[items,setItems]=useState<any[]>([]),[q,setQ]=useState(""),[error,setError]=useState(""),[loading,setLoading]=useState(false),[showForm,setShowForm]=useState(false),[notice,setNotice]=useState("");
-const role=user?.role||"", token=localStorage.getItem("x7_token"), expected=routeRoles[loc.pathname];
-const apiHeaders={"Authorization":`Bearer ${token}`,"Content-Type":"application/json"};
-useEffect(()=>{if(!token||!user)return;fetch(`${API}/api/v1/dashboard/summary`,{headers:apiHeaders}).then(r=>r.ok?r.json():null).then(setSummary).catch(()=>{});},[]);
-useEffect(()=>{if(!token||!user)return;const endpoints:Record<string,string>={Patients:"patients",Doctors:"doctors",Appointments:"appointments",Treatments:"treatments","Lab Reports":"lab-reports",Prescriptions:"prescriptions",Invoices:"invoices"};if(!endpoints[module]){setItems([]);return;}setLoading(true);setError("");fetch(`${API}/api/v1/${endpoints[module].toLowerCase()}`,{headers:apiHeaders}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.detail||"Failed to load");return d;}).then(setItems).catch(e=>setError(e.message)).finally(()=>setLoading(false));},[module]);
-if(!token||!user)return <Navigate to="/login" replace/>;if(expected!==role)return <Navigate to={paths[role]||"/login"} replace/>;
-const logout=()=>{localStorage.removeItem("x7_token");localStorage.removeItem("x7_user");nav("/");};
-const modules=role==="patient"?["Overview","Appointments","Treatments","Lab Reports","Prescriptions","Invoices"]:role==="doctor"?["Overview","Patients","Appointments","Treatments","Lab Reports","Prescriptions"]:role==="lab_technician"?["Overview","Patients","Lab Reports"]:role==="pharmacist"?["Overview","Prescriptions"]:role==="billing_staff"?["Overview","Invoices"]:["Overview","Patients","Doctors","Appointments","Treatments","Lab Reports","Prescriptions","Invoices"];
-const title=role.replaceAll("_"," ").replace(/\b\w/g,(c: string)=>c.toUpperCase());
-const fields:Record<string,string[]>={Patients:["patient_code","full_name","gender","phone","email","blood_group"],Doctors:["full_name","specialization","phone","email"],Appointments:["patient_id","doctor_id","scheduled_at","reason"],Treatments:["treatment_code","patient_id","doctor_id","diagnosis","description","start_date"],"Lab Reports":["patient_id","test_name","result","report_date"],Prescriptions:["patient_id","doctor_id","medication","dosage","instructions","prescribed_date"],Invoices:["patient_id","description","amount","invoice_date"]};
-const defaults:Record<string,Record<string,string>>={Patients:{patient_code:"PT"+Date.now().toString().slice(-8),full_name:"",gender:"",phone:"",email:"",blood_group:""},Doctors:{full_name:"",specialization:"General Medicine",phone:"",email:""},Appointments:{patient_id:"1",doctor_id:"1",scheduled_at:new Date(Date.now()+86400000).toISOString().slice(0,16),reason:"",status:"scheduled"},Treatments:{treatment_code:"TRT"+Date.now().toString().slice(-8),patient_id:"1",doctor_id:"1",diagnosis:"",description:"",start_date:new Date().toISOString().slice(0,10),status:"active"},"Lab Reports":{patient_id:"1",test_name:"",result:"",report_date:new Date().toISOString().slice(0,10),status:"review_pending"},Prescriptions:{patient_id:"1",doctor_id:"1",medication:"",dosage:"",instructions:"",prescribed_date:new Date().toISOString().slice(0,10),status:"active"},Invoices:{patient_id:"1",description:"",amount:"",invoice_date:new Date().toISOString().slice(0,10),status:"unpaid"}};
-async function createItem(e:FormEvent){e.preventDefault();const map:Record<string,string>={Patients:"patients",Doctors:"doctors",Appointments:"appointments",Treatments:"treatments","Lab Reports":"lab-reports",Prescriptions:"prescriptions",Invoices:"invoices"};const form=new FormData(e.currentTarget as HTMLFormElement);const body:any={};for(const [k,v] of form.entries()){body[k]=v;}["patient_id","doctor_id","amount"].forEach(k=>{if(body[k]!==undefined)body[k]=Number(body[k]);});try{const r=await fetch(`${API}/api/v1/${map[module]}`,{method:"POST",headers:apiHeaders,body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Create failed");setNotice(`${module.slice(0,-1)} created successfully.`);setShowForm(false);const r2=await fetch(`${API}/api/v1/${map[module]}`,{headers:apiHeaders});setItems(await r2.json());}catch(e){setError(e instanceof Error?e.message:"Could not save record");}}
-const cards=[["Patients",summary?.patients??"—",Users],["Doctors",summary?.doctors??"—",Stethoscope],["Appointments",summary?.appointments??"—",Activity],["Active treatments",summary?.active_treatments??"—",ClipboardList]];
-const filtered=items.filter(it=>JSON.stringify(it).toLowerCase().includes(q.toLowerCase()));
-return <div className="app-shell"><aside className="sidebar"><div className="logo side-logo"><span>X7</span><div><b>MEDICORE</b><small>HOSPITAL MANAGEMENT</small></div></div><div className="nav-label">WORKSPACE</div>{modules.map(m=><button className={`nav-button ${module===m?"active":""}`} onClick={()=>{setModule(m);setShowForm(false);setNotice("");}} key={m}>{m==="Patients"?<Users size={17}/>:m==="Doctors"?<Stethoscope size={17}/>:m==="Appointments"?<Activity size={17}/>:m==="Treatments"?<ClipboardList size={17}/>:m==="Invoices"?<FileText size={17}/>:<HeartPulse size={17}/>} {m}</button>)}<div className="sidebar-bottom"><ShieldCheck size={19}/><b>Protected workspace</b><small>Role: {role.replaceAll("_"," ")}</small><button onClick={logout}><LogOut size={16}/> Sign out</button></div></aside><main className="main-area"><header className="topbar"><div><span className="eyebrow">X7 MEDICORE / {title.toUpperCase()}</span><h1>{module==="Overview"?`${title} Dashboard`:module}</h1></div><div className="top-user"><Bell size={18}/><div className="user-avatar">{user.full_name.slice(0,1).toUpperCase()}</div><div><b>{user.full_name}</b><small>{user.email}</small></div></div></header>{module==="Overview"? <><section className="welcome-card"><div><span className="eyebrow">YOUR HEALTHCARE WORKSPACE</span><h2>Welcome back, {user.full_name}</h2><p>Review operational activity and open a module from the left navigation.</p></div><HeartPulse size={48}/></section><section className="stats">{cards.map(([label,value,Icon]:any)=><article className="stat" key={label}><div><span>{label}</span><Icon size={20}/></div><strong>{value}</strong><small>Database-backed summary</small></article>)}<article className="stat"><div><span>Invoice total</span><FileText size={20}/></div><strong>₹{Number(summary?.invoices_total||0).toLocaleString("en-IN")}</strong><small>Recorded invoices</small></article></section><section className="panel intro-panel"><h2>Hospital operations</h2><p>Choose a module to create and review records. The counts above are fetched from the API, not hard-coded design values.</p><div className="module-grid">{modules.filter(x=>x!=="Overview").map(m=><button onClick={()=>setModule(m)} key={m}><span><Activity size={18}/></span><b>{m}</b><ArrowRight size={16}/></button>)}</div></section></>:<section className="panel data-panel"><div className="panel-head"><div><h2>{module}</h2><p>Records available to your authorized account</p></div><div className="table-actions"><label className="search"><Search size={16}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search records"/></label>{["Patients","Doctors","Appointments","Treatments","Lab Reports","Prescriptions","Invoices"].includes(module)&&role!=="patient"&&role!=="lab_technician"&&role!=="pharmacist"&&<button className="primary small" onClick={()=>{setShowForm(!showForm);setError("");}}><Plus size={16}/> Add new</button>}</div></div>{notice&&<div className="success">{notice}</div>}{error&&<div className="error">{error}</div>}{showForm&&<form className="record-form" onSubmit={createItem}>{(fields[module]||[]).map(field=><label key={field}>{field.replaceAll("_"," ")}<input name={field} type={["patient_id","doctor_id","amount"].includes(field)?"number":field.includes("date")||field==="scheduled_at"?"datetime-local" : "text"} defaultValue={defaults[module]?.[field]||""} required={!["phone","email","address","description","instructions","reason","gender","blood_group"].includes(field)}/></label>)}<div className="form-actions"><button className="primary small">Save record</button><button type="button" className="secondary small" onClick={()=>setShowForm(false)}>Cancel</button></div></form>}{loading?<p className="empty">Loading records…</p>:filtered.length===0?<p className="empty">No records found. Add a record or try another search.</p>:<div className="table-wrap"><table><thead><tr>{Object.keys(filtered[0]).filter(k=>!["hospital_id"].includes(k)).map(k=><th key={k}>{k.replaceAll("_"," ")}</th>)}</tr></thead><tbody>{filtered.map((item,i)=><tr key={item.id||i}>{Object.keys(item).filter(k=>k!=="hospital_id").map(k=><td key={k}>{String(item[k]??"—")}</td>)}</tr>)}</tbody></table></div>}</section>}<footer className="page-footer">X7 MediCore HMS · Educational MVP · Use synthetic data only</footer></main></div>;
+
+// Hospital Admin Login Page
+function HospitalAdminLoginPage() {
+  return (
+    <div className="auth-page-wrapper">
+      <header className="auth-page-header">
+        <Link to="/" className="logo brand-logo">
+          <div className="logo-symbol">
+            <span>X7</span>
+          </div>
+          <div>
+            <b>MEDICORE</b>
+            <small>HOSPITAL MANAGEMENT SYSTEM</small>
+          </div>
+        </Link>
+      </header>
+      <main className="auth-form-center">
+        <LoginForm portal="hospital_admin" />
+      </main>
+    </div>
+  );
 }
-export default function App(){return <Routes><Route path="/" element={<Landing/>}/><Route path="/super-admin/login" element={<Login portal="super_admin"/>}/><Route path="/hospital-admin/login" element={<Login portal="hospital_admin"/>}/><Route path="/login" element={<Login portal="general"/>}/>{Object.entries(paths).map(([role,path])=><Route key={path} path={path} element={<Dashboard/>}/>)}<Route path="*" element={<Navigate to="/" replace/>}/></Routes>}
+
+// Doctors, Staff & Patient Login Page
+function GeneralLoginPage() {
+  const [params] = useSearchParams();
+  const defaultTab = params.get("tab") === "patient" ? "patient" : "staff";
+
+  return (
+    <div className="auth-page-wrapper">
+      <header className="auth-page-header">
+        <Link to="/" className="logo brand-logo">
+          <div className="logo-symbol">
+            <span>X7</span>
+          </div>
+          <div>
+            <b>MEDICORE</b>
+            <small>HOSPITAL MANAGEMENT SYSTEM</small>
+          </div>
+        </Link>
+      </header>
+      <main className="auth-form-center">
+        <LoginForm portal="general" defaultTab={defaultTab} />
+      </main>
+    </div>
+  );
+}
+
+// Dedicated Super Admin Login Page (No hospital selection needed)
+function SuperAdminLoginPage() {
+  return (
+    <div className="auth-page-wrapper super-admin-theme">
+      <header className="auth-page-header">
+        <Link to="/" className="logo brand-logo">
+          <div className="logo-symbol">
+            <span>X7</span>
+          </div>
+          <div>
+            <b>MEDICORE</b>
+            <small>SUPER ADMIN CONSOLE</small>
+          </div>
+        </Link>
+      </header>
+      <main className="auth-form-center">
+        <LoginForm portal="super_admin" />
+      </main>
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Routes>
+        {/* Public Routes */}
+        <Route path="/" element={<PublicHome />} />
+        <Route path="/hospital-admin/login" element={<HospitalAdminLoginPage />} />
+        <Route path="/login" element={<GeneralLoginPage />} />
+        <Route path="/super-admin/login" element={<SuperAdminLoginPage />} />
+
+        {/* Protected Role-Based Dashboards */}
+        <Route
+          path="/super-admin/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["super_admin"]}>
+              <SuperAdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/hospital-admin/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["hospital_admin", "super_admin"]}>
+              <StaffDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/doctor/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["doctor", "super_admin"]}>
+              <StaffDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/patient/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["patient", "super_admin"]}>
+              <PatientDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/staff/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["nurse", "super_admin"]}>
+              <StaffDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/lab/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["lab_technician", "super_admin"]}>
+              <StaffDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/pharmacy/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["pharmacist", "super_admin"]}>
+              <StaffDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/billing/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["billing_staff", "super_admin"]}>
+              <StaffDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AuthProvider>
+  );
+}
