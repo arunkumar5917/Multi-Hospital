@@ -1,8 +1,24 @@
 from datetime import datetime, date
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-# ----------------- Facility & Authentication Schemas -----------------
-class HospitalBase(BaseModel):
+# ----------------- Authentication Schemas -----------------
+class TokenPayload(BaseModel):
+    sub: str
+    role: str
+    hospital_id: str | None = None
+    grn: str | None = None
+    exp: int
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    email: str
+    full_name: str
+    role: str
+    hospital_id: str | None = None
+    is_active: bool
+
+class HospitalCreate(BaseModel):
     code: str = Field(min_length=2, max_length=30)
     name: str = Field(min_length=2, max_length=160)
     location: str = Field(min_length=2, max_length=160)
@@ -11,9 +27,6 @@ class HospitalBase(BaseModel):
     email: str | None = None
     logo_url: str | None = None
     is_active: bool = True
-
-class HospitalCreate(HospitalBase):
-    pass
 
 class HospitalUpdate(BaseModel):
     name: str | None = None
@@ -24,31 +37,22 @@ class HospitalUpdate(BaseModel):
     logo_url: str | None = None
     is_active: bool | None = None
 
-class HospitalOut(HospitalBase):
+class HospitalOut(HospitalCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
     created_at: datetime
 
 class LoginRequest(BaseModel):
-    email: str | None = None
-    identifier: str | None = None  # email or GRN
-    password: str = Field(min_length=1, max_length=128)
-    portal: str = "general"        # "super_admin" | "hospital_admin" | "general"
-    hospital_code: str | None = None
+    portal: str = Field(description="super_admin | hospital_admin | general | staff | patient")
+    hospital_code: str | None = Field(default=None, description="Required for non-superadmin users")
+    identifier: str | None = Field(default=None, description="Email or Global Registration Number")
+    email: str | None = Field(default=None, description="Legacy email field")
+    password: str = Field(min_length=1)
     remember_me: bool = False
-
-class UserOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    email: str
-    full_name: str
-    role: str
-    hospital_id: str | None = None
-    grn: str | None = None
 
 class LoginResponse(BaseModel):
     access_token: str
-    refresh_token: str | None = None
+    refresh_token: str
     token_type: str = "bearer"
     user: UserOut
     dashboard_path: str
@@ -106,6 +110,7 @@ class PatientSearchResult(BaseModel):
     linked_hospitals: list[str] = []
     is_linked_to_current_hospital: bool = True
     consent_status: str = "granted"
+    photo_url: str | None = None
 
 class PatientHospitalLinkRequest(BaseModel):
     hospital_code: str
@@ -117,14 +122,39 @@ class PatientProfileOut(BaseModel):
     grn: str
     full_name: str
     date_of_birth: date | None = None
+    age: int | None = None
     gender: str | None = None
     phone: str | None = None
     email: str | None = None
+    address: str | None = None
     blood_group: str | None = None
     emergency_contact: str | None = None
+    photo_url: str | None = None
+    marital_status: str | None = None
+    occupation: str | None = None
+    insurance_provider: str | None = None
+    insurance_policy_number: str | None = None
+    insurance_valid_till: date | None = None
+    national_id: str | None = None
     primary_hospital_code: str | None = None
     primary_hospital_name: str | None = None
     registered_hospitals: list[str] = []
+    registration_date: datetime | None = None
+
+class PatientProfileUpdate(BaseModel):
+    full_name: str | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    emergency_contact: str | None = None
+    blood_group: str | None = None
+    marital_status: str | None = None
+    occupation: str | None = None
+    insurance_provider: str | None = None
+    insurance_policy_number: str | None = None
+    insurance_valid_till: date | None = None
 
 # ----------------- Medical History, Conditions & Allergies -----------------
 class MedicalHistoryCreate(BaseModel):
@@ -184,7 +214,7 @@ class MedicalTimelineEvent(BaseModel):
     status: str | None = None
     details_url: str | None = None
 
-# ----------------- Prescriptions & Attachments -----------------
+# ----------------- Prescriptions, Documents & Notes -----------------
 class PrescriptionItem(BaseModel):
     medication: str = Field(min_length=1, max_length=160)
     dosage: str = Field(min_length=1, max_length=160)
@@ -214,6 +244,22 @@ class AttachmentOut(BaseModel):
     upload_date: datetime
     download_url: str
 
+class MedicalDocumentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    document_code: str
+    treatment_id: int | None = None
+    patient_grn: str
+    hospital_id: str
+    document_name: str
+    original_filename: str
+    file_type: str
+    file_category: str
+    file_size: int
+    description: str
+    upload_date: datetime
+    download_url: str
+
 class TreatmentNoteCreate(BaseModel):
     note_type: str = "observation"  # observation, consultation, follow_up, correction
     note_text: str = Field(min_length=1)
@@ -224,6 +270,93 @@ class TreatmentNoteOut(TreatmentNoteCreate):
     treatment_id: int
     doctor_id: int | None = None
     created_at: datetime
+
+class TreatmentHistoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    treatment_id: int
+    action: str
+    status_before: str | None = None
+    status_after: str
+    change_summary: str | None = None
+    timestamp: datetime
+    changed_by_name: str | None = None
+
+# ----------------- Patient Vitals & Health Analysis -----------------
+class PatientVitalCreate(BaseModel):
+    blood_pressure_systolic: int = Field(ge=50, le=280)
+    blood_pressure_diastolic: int = Field(ge=30, le=200)
+    pulse: int = Field(ge=30, le=250)
+    temperature: float = Field(ge=90.0, le=110.0)
+    oxygen_saturation: int = Field(ge=50, le=100)
+    respiratory_rate: int | None = Field(default=None, ge=5, le=60)
+    weight_kg: float | None = None
+    height_cm: float | None = None
+    notes: str | None = None
+
+class PatientVitalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    patient_grn: str
+    hospital_id: str
+    blood_pressure_systolic: int
+    blood_pressure_diastolic: int
+    pulse: int
+    temperature: float
+    oxygen_saturation: int
+    respiratory_rate: int | None = None
+    weight_kg: float | None = None
+    height_cm: float | None = None
+    bmi: float | None = None
+    is_abnormal: bool
+    abnormal_notes: str | None = None
+    recorded_at: datetime
+    recorded_by_name: str | None = None
+
+class FamilyContactCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=160)
+    relationship: str = Field(min_length=2, max_length=60)
+    phone: str = Field(min_length=5, max_length=40)
+    email: str | None = None
+    address: str | None = None
+    is_emergency_contact: bool = True
+    is_primary: bool = False
+
+class FamilyContactOut(FamilyContactCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    patient_grn: str
+    created_at: datetime
+
+class LabReportCreate(BaseModel):
+    patient_id: int | None = None
+    treatment_id: int | None = None
+    test_name: str = Field(min_length=2, max_length=160)
+    test_category: str = "General Pathology"
+    result: str
+    value: float | None = None
+    unit: str | None = None
+    reference_range: str | None = None
+    report_date: date = date.today()
+    status: str = "Completed"
+    is_abnormal: bool = False
+    abnormal_flag: str | None = None
+
+class LabReportOut(LabReportCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    hospital_id: str
+
+class HealthAnalysisOut(BaseModel):
+    grn: str
+    current_vitals: PatientVitalOut | None = None
+    historical_vitals: list[PatientVitalOut] = []
+    lab_reports: list[LabReportOut] = []
+    abnormal_findings: list[str] = []
+    allergies: list[PatientAllergyOut] = []
+    conditions: list[MedicalConditionOut] = []
+    active_medications: list[PrescriptionOut] = []
+    surgeries: list[MedicalHistoryOut] = []
 
 # ----------------- Treatments -----------------
 class TreatmentCreate(BaseModel):
@@ -237,7 +370,7 @@ class TreatmentCreate(BaseModel):
     procedures_performed: str = ""
     follow_up_instructions: str = ""
     next_appointment_date: datetime | None = None
-    status: str = "In Progress"  # Scheduled, In Progress, Completed, Follow-up Required, Referred, Cancelled
+    status: str = "Active"  # Active, In Progress, Completed, Follow-up Required, Referred, Cancelled
     prescriptions: list[PrescriptionItem] = []
 
 class TreatmentUpdate(BaseModel):
@@ -277,7 +410,10 @@ class TreatmentOut(BaseModel):
     created_at: datetime
     prescriptions: list[PrescriptionOut] = []
     attachments: list[AttachmentOut] = []
+    documents: list[MedicalDocumentOut] = []
     notes: list[TreatmentNoteOut] = []
+    history_logs: list[TreatmentHistoryOut] = []
+    lab_reports: list[LabReportOut] = []
 
 # ----------------- Consents & Access Logs -----------------
 class PatientConsentCreate(BaseModel):
@@ -347,18 +483,6 @@ class AppointmentCreate(BaseModel):
     status: str = "scheduled"
 
 class AppointmentOut(AppointmentCreate):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    hospital_id: str
-
-class LabReportCreate(BaseModel):
-    patient_id: int
-    test_name: str
-    result: str
-    report_date: date = date.today()
-    status: str = "review_pending"
-
-class LabReportOut(LabReportCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
     hospital_id: str

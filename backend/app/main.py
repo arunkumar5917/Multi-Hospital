@@ -1,10 +1,11 @@
 import os
+import io
 import shutil
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, status, Query, Request, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, status, Query, Request, UploadFile, File, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -12,14 +13,17 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, desc
 import jwt
 from jwt import InvalidTokenError
+import qrcode
+import qrcode.image.svg
 
 from .database import Base, engine, get_db, SessionLocal
 from .models import (
-    Hospital, User, UserHospitalMembership, GlobalPatient, PatientAccount,
+    Hospital, User, UserHospitalMembership, GlobalPatient, PatientProfile, PatientAccount,
     PatientHospitalLink, MedicalHistory, MedicalCondition, PatientAllergy,
-    Treatment, TreatmentNote, TreatmentAttachment, Prescription, MedicalReport,
+    Treatment, TreatmentNote, TreatmentHistory, TreatmentAttachment, MedicalDocument,
+    PatientVital, FamilyContact, Prescription, MedicalReport, LabReport,
     PatientConsent, MedicalRecordAccessLog, MedicalRecordAuditLog,
-    Patient, Doctor, Appointment, LabReport, Invoice,
+    Patient, Doctor, Appointment, Invoice,
     PasswordResetToken, UserSession, LoginAttempt, AuthenticationAuditLog
 )
 from .schemas import (
@@ -27,14 +31,16 @@ from .schemas import (
     LoginRequest, LoginResponse, RefreshTokenRequest, ForgotPasswordRequest,
     ForgotPasswordResponse, ResetPasswordRequest, AuditLogOut,
     PatientRegisterRequest, PatientSearchResult, PatientHospitalLinkRequest,
-    PatientProfileOut, MedicalHistoryCreate, MedicalHistoryOut,
+    PatientProfileOut, PatientProfileUpdate, MedicalHistoryCreate, MedicalHistoryOut,
     MedicalConditionCreate, MedicalConditionOut, PatientAllergyCreate, PatientAllergyOut,
     MedicalTimelineEvent, TreatmentCreate, TreatmentUpdate, TreatmentOut,
-    PrescriptionItem, PrescriptionOut, AttachmentOut, TreatmentNoteCreate, TreatmentNoteOut,
+    PrescriptionItem, PrescriptionOut, AttachmentOut, MedicalDocumentOut,
+    TreatmentNoteCreate, TreatmentNoteOut, TreatmentHistoryOut,
+    PatientVitalCreate, PatientVitalOut, FamilyContactCreate, FamilyContactOut,
+    LabReportCreate, LabReportOut, HealthAnalysisOut,
     PatientConsentCreate, PatientConsentOut, MedicalAccessLogOut,
     UserOut, PatientCreate, PatientOut, DoctorCreate, DoctorOut,
-    AppointmentCreate, AppointmentOut, LabReportCreate, LabReportOut,
-    InvoiceCreate, InvoiceOut
+    AppointmentCreate, AppointmentOut, InvoiceCreate, InvoiceOut
 )
 from .security import (
     hash_password, verify_password, create_access_token, create_refresh_token,
@@ -45,12 +51,17 @@ load_dotenv()
 Base.metadata.create_all(bind=engine)
 
 STORAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage", "attachments"))
+DOCUMENTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage", "documents"))
+PHOTOS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage", "photos"))
+
 os.makedirs(STORAGE_DIR, exist_ok=True)
+os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 app = FastAPI(
     title="X7 MediCore HMS API",
-    version="3.0.0",
-    description="Centralized Global Patient Identity & Federated Multi-Hospital Medical History Management System"
+    version="3.5.0",
+    description="Centralized Global Patient Identity, Electronic Health Records & Multi-Hospital Clinical Management"
 )
 
 origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
@@ -89,7 +100,6 @@ def generate_next_grn(db: Session) -> str:
     max_id = db.query(func.max(GlobalPatient.id)).scalar() or 0
     candidate_id = max_id + 1
     candidate_grn = f"XM-GRN-{candidate_id:06d}"
-    # Safety check to prevent collisions
     while db.query(GlobalPatient).filter(GlobalPatient.grn == candidate_grn).first():
         candidate_id += 1
         candidate_grn = f"XM-GRN-{candidate_id:06d}"
@@ -113,12 +123,46 @@ def generate_attachment_code(db: Session) -> str:
         code = f"ATT-{year}-{count:04d}"
     return code
 
+def generate_document_code(db: Session) -> str:
+    year = datetime.utcnow().year
+    count = db.query(MedicalDocument).count() + 1
+    code = f"DOC-{year}-{count:04d}"
+    while db.query(MedicalDocument).filter(MedicalDocument.document_code == code).first():
+        count += 1
+        code = f"DOC-{year}-{count:04d}"
+    return code
+
+def calculate_age(dob: date | None) -> int | None:
+    if not dob:
+        return None
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+def get_client_ip(request: Request | None) -> str:
+    if not request:
+        return "127.0.0.1"
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+def log_audit(db: Session, event: str, user_id: int | None = None, hospital_code: str | None = None, ip_address: str | None = None, details: str | None = None):
+    try:
+        audit = AuthenticationAuditLog(
+            user_id=user_id, event=event, hospital_code=hospital_code,
+            ip_address=ip_address, details=details, created_at=datetime.utcnow()
+        )
+        db.add(audit)
+        db.commit()
+    except Exception:
+        db.rollback()
+
 def log_medical_access(db: Session, user: User, global_patient_id: int, hospital_id: str | None,
                        resource_type: str, resource_id: str | None, action: str, request: Request | None = None):
     try:
         ip = get_client_ip(request) if request else "127.0.0.1"
         log = MedicalRecordAccessLog(
-            user_id=user.id, global_patient_id=global_patient_id, hospital_id=hospital_id,
+            user_id=user.id, global_patient_id=global_patient_id, hospital_id=hospital_id or "Network",
             resource_type=resource_type, resource_id=str(resource_id) if resource_id else None,
             action=action, ip_address=ip, accessed_at=datetime.utcnow()
         )
@@ -131,14 +175,132 @@ def log_medical_audit(db: Session, user: User, global_patient_id: int, hospital_
                       action: str, table_name: str, record_id: str, old_val: str | None = None, new_val: str | None = None):
     try:
         audit = MedicalRecordAuditLog(
-            user_id=user.id, global_patient_id=global_patient_id, hospital_id=hospital_id,
-            action=action, table_name=table_name, record_id=str(record_id),
-            old_values=old_val, new_values=new_val, timestamp=datetime.utcnow()
+            user_id=user.id, global_patient_id=global_patient_id, hospital_id=hospital_id or "Network",
+            action=action, target_table=table_name, target_id=str(record_id),
+            old_value=old_val, new_value=new_val, created_at=datetime.utcnow()
         )
         db.add(audit)
         db.commit()
     except Exception:
         db.rollback()
+
+def build_patient_profile_out(gp: GlobalPatient, user: User | None = None, primary_hosp: Hospital | None = None) -> PatientProfileOut:
+    prof = gp.profile
+    age = prof.age if prof and prof.age else calculate_age(gp.date_of_birth)
+    registered_hospitals = [link.hospital.name for link in gp.hospital_links if link.hospital and link.is_active]
+    hosp_code = primary_hosp.code if primary_hosp else (user.hospital_id if user and user.hospital_id else (gp.hospital_links[0].hospital.code if gp.hospital_links else "HOSP-001"))
+    hosp_name = primary_hosp.name if primary_hosp else (gp.hospital_links[0].hospital.name if gp.hospital_links else None)
+
+    return PatientProfileOut(
+        grn=gp.grn,
+        full_name=gp.full_name,
+        date_of_birth=gp.date_of_birth,
+        age=age,
+        gender=gp.gender,
+        phone=gp.phone,
+        email=gp.email,
+        address=gp.address,
+        blood_group=gp.blood_group,
+        emergency_contact=gp.emergency_contact,
+        photo_url=prof.photo_url if prof and prof.photo_url else f"/api/v1/patients/{gp.grn}/photo",
+        marital_status=prof.marital_status if prof else "Single",
+        occupation=prof.occupation if prof else "Professional",
+        insurance_provider=prof.insurance_provider if prof else "Star Health Comprehensive",
+        insurance_policy_number=prof.insurance_policy_number if prof else "SH-MED-8492019",
+        insurance_valid_till=prof.insurance_valid_till if prof else date(2027, 8, 31),
+        national_id=prof.national_id if prof else None,
+        primary_hospital_code=hosp_code,
+        primary_hospital_name=hosp_name,
+        registered_hospitals=registered_hospitals,
+        registration_date=gp.created_at
+    )
+
+def build_treatment_out(t: Treatment, db: Session) -> TreatmentOut:
+    gp = t.global_patient
+    doc = t.doctor
+    hosp = db.query(Hospital).filter(Hospital.code == t.hospital_id).first()
+
+    rx_outs = [PrescriptionOut.model_validate(p) for p in t.prescriptions]
+    att_outs = [
+        AttachmentOut(
+            id=a.id,
+            attachment_code=a.attachment_code,
+            treatment_id=a.treatment_id,
+            patient_grn=gp.grn,
+            hospital_id=a.hospital_id,
+            original_filename=a.original_filename,
+            file_type=a.file_type,
+            file_category=a.file_category,
+            file_size=a.file_size,
+            description=a.description,
+            upload_date=a.upload_date,
+            download_url=f"/api/v1/attachments/{a.id}"
+        )
+        for a in t.attachments
+    ]
+    doc_outs = [
+        MedicalDocumentOut(
+            id=d.id,
+            document_code=d.document_code,
+            treatment_id=d.treatment_id,
+            patient_grn=d.patient_grn,
+            hospital_id=d.hospital_id,
+            document_name=d.document_name,
+            original_filename=d.original_filename,
+            file_type=d.file_type,
+            file_category=d.file_category,
+            file_size=d.file_size,
+            description=d.description,
+            upload_date=d.upload_date,
+            download_url=f"/api/v1/documents/{d.id}"
+        )
+        for d in t.medical_documents if d.is_active
+    ]
+    note_outs = [TreatmentNoteOut.model_validate(n) for n in t.notes]
+    hist_outs = [
+        TreatmentHistoryOut(
+            id=h.id,
+            treatment_id=h.treatment_id,
+            action=h.action,
+            status_before=h.status_before,
+            status_after=h.status_after,
+            change_summary=h.change_summary,
+            timestamp=h.timestamp,
+            changed_by_name=h.changed_by.full_name if h.changed_by else "System"
+        )
+        for h in t.history_logs
+    ]
+    lab_outs = [LabReportOut.model_validate(lr) for lr in t.lab_reports]
+
+    return TreatmentOut(
+        id=t.id,
+        treatment_code=t.treatment_code,
+        global_patient_id=gp.id,
+        patient_grn=gp.grn,
+        patient_name=gp.full_name,
+        doctor_id=doc.id if doc else 0,
+        doctor_name=doc.full_name if doc else "Attending Doctor",
+        doctor_specialization=doc.specialization if doc else "General",
+        hospital_id=t.hospital_id,
+        hospital_name=hosp.name if hosp else t.hospital_id,
+        visit_date=t.visit_date,
+        chief_complaint=t.chief_complaint,
+        symptoms=t.symptoms,
+        clinical_observations=t.clinical_observations,
+        diagnosis=t.diagnosis,
+        description=t.description,
+        procedures_performed=t.procedures_performed,
+        follow_up_instructions=t.follow_up_instructions,
+        next_appointment_date=t.next_appointment_date,
+        status=t.status,
+        created_at=t.created_at,
+        prescriptions=rx_outs,
+        attachments=att_outs,
+        documents=doc_outs,
+        notes=note_outs,
+        history_logs=hist_outs,
+        lab_reports=lab_outs
+    )
 
 # ----------------- Demo Seeding -----------------
 def seed_demo_data():
@@ -181,7 +343,22 @@ def seed_demo_data():
             )
             db.add(gp2); db.commit(); db.refresh(gp2)
 
-        # 3. Patient-Hospital Links
+        # 3. Patient Profiles
+        if not gp1.profile:
+            prof1 = PatientProfile(
+                global_patient_id=gp1.id,
+                photo_url=f"/api/v1/patients/{gp1.grn}/photo",
+                age=28,
+                marital_status="Single",
+                occupation="Senior Systems Architect",
+                insurance_provider="Star Health Comprehensive Care",
+                insurance_policy_number="SH-MED-8492019",
+                insurance_valid_till=date(2027, 8, 31),
+                national_id="IND-9842-1920-8341"
+            )
+            db.add(prof1); db.commit()
+
+        # 4. Patient-Hospital Links
         if db.query(PatientHospitalLink).count() == 0:
             link1 = PatientHospitalLink(global_patient_id=gp1.id, hospital_id=hospital_map["HOSP-001"].id, local_patient_id="PT-CHN-001", consent_status="granted")
             link2 = PatientHospitalLink(global_patient_id=gp1.id, hospital_id=hospital_map["HOSP-002"].id, local_patient_id="PT-BLR-001", consent_status="granted")
@@ -189,7 +366,7 @@ def seed_demo_data():
             db.add_all([link1, link2, link3])
             db.commit()
 
-        # 4. Medical Conditions & Allergies
+        # 5. Medical Conditions & Allergies
         if db.query(MedicalCondition).count() == 0:
             db.add_all([
                 MedicalCondition(global_patient_id=gp1.id, condition_name="Primary Hypertension", icd_code="I10", status="active", diagnosed_date=date(2025, 4, 10), notes="Controlled on low-dose ACE inhibitor"),
@@ -211,7 +388,7 @@ def seed_demo_data():
             ])
             db.commit()
 
-        # 5. Seed Users
+        # 6. Seed Users
         demos = [
             ("superadmin@x7medicore.local", "Super Admin", "super_admin", None),
             ("hospitaladmin@x7medicore.local", "Hospital Admin", "hospital_admin", "HOSP-001"),
@@ -252,7 +429,7 @@ def seed_demo_data():
             db.add(PatientAccount(user_id=pat_u1.id, global_patient_id=gp1.id, primary_hospital_id=hospital_map["HOSP-001"].id))
             db.commit()
 
-        # 6. Doctors & Clinical records
+        # 7. Doctors
         doc1 = db.query(Doctor).filter(Doctor.hospital_id == "HOSP-001").first()
         if not doc1:
             doc1 = Doctor(full_name="Dr. Kumar", specialization="General Medicine", phone="+91 90000 10001", email="doctor@x7medicore.local", hospital_id="HOSP-001")
@@ -263,7 +440,7 @@ def seed_demo_data():
             doc2 = Doctor(full_name="Dr. Priya", specialization="Cardiology", phone="+91 90000 10002", email="doctor.priya@x7medicore.local", hospital_id="HOSP-002")
             db.add(doc2); db.commit(); db.refresh(doc2)
 
-        # 7. Multi-Hospital Treatments for Arun Kumar (XM-GRN-000001)
+        # 8. Multi-Hospital Treatments
         if db.query(Treatment).count() == 0:
             # Treatment 1 at HOSP-001 (Chennai)
             t1 = Treatment(
@@ -274,7 +451,7 @@ def seed_demo_data():
                 visit_date=datetime.now() - timedelta(days=20),
                 chief_complaint="Persistent dry cough and sore throat for 3 days",
                 symptoms="Fever (99.8 F), throat irritation, mild headache",
-                clinical_observations="Erythematous posterior pharyngeal wall. Normal vesicular breath sounds. No cervical lymphadenopathy.",
+                clinical_observations="Erythematous posterior pharyngeal wall. Normal vesicular breath sounds.",
                 diagnosis="Seasonal Upper Respiratory Infection",
                 description="Prescribed supportive care, oral hydration, and 5-day antibiotic regimen.",
                 procedures_performed="Throat swab inspection and vital signs assessment",
@@ -284,12 +461,10 @@ def seed_demo_data():
             )
             db.add(t1); db.commit(); db.refresh(t1)
 
-            # Prescriptions for T1
             p1 = Prescription(treatment_id=t1.id, global_patient_id=gp1.id, doctor_id=doc1.id, hospital_id="HOSP-001",
                               medication="Azithromycin 500mg", dosage="1 tablet daily before breakfast", instructions="Complete full 5-day course", prescribed_date=date.today() - timedelta(days=20), status="completed")
             db.add(p1); db.commit()
 
-            # Attachment for T1
             xray_file = "sample_xray_chest.png"
             att1 = TreatmentAttachment(
                 attachment_code="ATT-2026-0001",
@@ -302,12 +477,12 @@ def seed_demo_data():
                 file_category="X-ray",
                 file_size=1024,
                 file_path=os.path.join(STORAGE_DIR, xray_file),
-                description="Chest radiograph showing clear lung fields with no focal consolidations or pleural effusion.",
+                description="Chest radiograph showing clear lung fields with no focal consolidations.",
                 upload_date=datetime.now() - timedelta(days=20)
             )
             db.add(att1); db.commit()
 
-            # Treatment 2 at HOSP-002 (Bengaluru - Cross-Hospital Visit!)
+            # Treatment 2 at HOSP-002 (Bengaluru - Active Present Treatment!)
             t2 = Treatment(
                 treatment_code="TRT-2026-0002",
                 global_patient_id=gp1.id,
@@ -315,24 +490,22 @@ def seed_demo_data():
                 hospital_id="HOSP-002",
                 visit_date=datetime.now() - timedelta(days=5),
                 chief_complaint="Elevated blood pressure during annual executive health checkup",
-                symptoms="Occasional morning occipital headache, no chest pain or shortness of breath",
-                clinical_observations="Sitting BP: 146/92 mmHg. Heart sounds normal. ECG shows normal sinus rhythm.",
+                symptoms="Occasional morning occipital headache, no chest pain or dyspnea",
+                clinical_observations="Sitting BP: 146/92 mmHg. Heart sounds regular. ECG shows normal sinus rhythm.",
                 diagnosis="Stage 1 Essential Hypertension",
                 description="Initiated lifestyle modifications, dietary sodium reduction, and anti-hypertensive therapy.",
                 procedures_performed="12-Lead Resting Electrocardiogram (ECG) and Ambulatory BP Monitoring review",
                 follow_up_instructions="Maintain daily home BP log and repeat clinical evaluation in 4 weeks.",
                 next_appointment_date=datetime.now() + timedelta(days=25),
-                status="In Progress",
+                status="Active",
                 created_at=datetime.now() - timedelta(days=5)
             )
             db.add(t2); db.commit(); db.refresh(t2)
 
-            # Prescription for T2
             p2 = Prescription(treatment_id=t2.id, global_patient_id=gp1.id, doctor_id=doc2.id, hospital_id="HOSP-002",
-                              medication="Telmisartan 40mg", dosage="1 tablet once daily in the morning", instructions="Take with water at the same time daily", prescribed_date=date.today() - timedelta(days=5), status="active")
+                              medication="Telmisartan 40mg", dosage="1 tablet once daily in morning", instructions="Take with water at the same time daily", prescribed_date=date.today() - timedelta(days=5), status="active")
             db.add(p2); db.commit()
 
-            # Attachment for T2 (Blood report PDF)
             pdf_file = "sample_blood_report.pdf"
             att2 = TreatmentAttachment(
                 attachment_code="ATT-2026-0002",
@@ -345,12 +518,146 @@ def seed_demo_data():
                 file_category="Blood Test Report",
                 file_size=2048,
                 file_path=os.path.join(STORAGE_DIR, pdf_file),
-                description="Complete Lipid profile and Renal panel: Total Cholesterol 192 mg/dL, Creatinine 0.9 mg/dL (Normal).",
+                description="Complete Lipid profile and Renal panel: Total Cholesterol 185 mg/dL, Creatinine 0.9 mg/dL (Normal).",
                 upload_date=datetime.now() - timedelta(days=5)
             )
             db.add(att2); db.commit()
 
-        # 8. Patient Consent record
+            # Seed Medical Documents table
+            doc1_rec = MedicalDocument(
+                document_code="DOC-2026-0001",
+                global_patient_id=gp1.id,
+                treatment_id=t1.id,
+                hospital_id="HOSP-001",
+                patient_grn=gp1.grn,
+                document_name="Chest Radiograph PA View",
+                original_filename="Chest_XRay_PA_View.png",
+                stored_filename="sample_xray_chest.png",
+                file_type="image/png",
+                file_category="X-ray",
+                file_size=1024,
+                file_path=os.path.join(DOCUMENTS_DIR, "sample_xray_chest.png"),
+                description="Chest radiograph showing clear lung fields with no focal consolidations.",
+                upload_date=datetime.now() - timedelta(days=20)
+            )
+            doc2_rec = MedicalDocument(
+                document_code="DOC-2026-0002",
+                global_patient_id=gp1.id,
+                treatment_id=t2.id,
+                hospital_id="HOSP-002",
+                patient_grn=gp1.grn,
+                document_name="Cardiovascular Lipid Panel & Kidney Profile",
+                original_filename="Cardiovascular_Lipid_Panel.pdf",
+                stored_filename="sample_blood_report.pdf",
+                file_type="application/pdf",
+                file_category="Blood Test Report",
+                file_size=2048,
+                file_path=os.path.join(DOCUMENTS_DIR, "sample_blood_report.pdf"),
+                description="Complete Lipid profile and Renal panel: Total Cholesterol 185 mg/dL, Creatinine 0.9 mg/dL.",
+                upload_date=datetime.now() - timedelta(days=5)
+            )
+            db.add_all([doc1_rec, doc2_rec]); db.commit()
+
+            # Seed Treatment History
+            hist1 = TreatmentHistory(
+                treatment_id=t1.id, action="CREATED", status_before=None, status_after="Completed",
+                change_summary="Initial consultation and discharge following resolution."
+            )
+            hist2 = TreatmentHistory(
+                treatment_id=t2.id, action="CREATED", status_before=None, status_after="Active",
+                change_summary="Cardiology outpatient consultation for Stage 1 Hypertension."
+            )
+            db.add_all([hist1, hist2]); db.commit()
+
+        # 9. Seed Patient Vitals (5 Historical Readings for Trending Charts)
+        if db.query(PatientVital).count() == 0:
+            db.add_all([
+                PatientVital(
+                    global_patient_id=gp1.id, patient_grn=gp1.grn, hospital_id="HOSP-001",
+                    blood_pressure_systolic=120, blood_pressure_diastolic=80, pulse=72, temperature=98.4,
+                    oxygen_saturation=99, respiratory_rate=16, weight_kg=72.5, height_cm=176.0, bmi=23.4,
+                    is_abnormal=False, recorded_at=datetime.utcnow() - timedelta(days=90)
+                ),
+                PatientVital(
+                    global_patient_id=gp1.id, patient_grn=gp1.grn, hospital_id="HOSP-001",
+                    blood_pressure_systolic=124, blood_pressure_diastolic=82, pulse=74, temperature=98.6,
+                    oxygen_saturation=98, respiratory_rate=16, weight_kg=73.0, height_cm=176.0, bmi=23.6,
+                    is_abnormal=False, recorded_at=datetime.utcnow() - timedelta(days=60)
+                ),
+                PatientVital(
+                    global_patient_id=gp1.id, patient_grn=gp1.grn, hospital_id="HOSP-001",
+                    blood_pressure_systolic=128, blood_pressure_diastolic=84, pulse=78, temperature=98.6,
+                    oxygen_saturation=98, respiratory_rate=18, weight_kg=73.5, height_cm=176.0, bmi=23.7,
+                    is_abnormal=False, recorded_at=datetime.utcnow() - timedelta(days=30)
+                ),
+                PatientVital(
+                    global_patient_id=gp1.id, patient_grn=gp1.grn, hospital_id="HOSP-002",
+                    blood_pressure_systolic=146, blood_pressure_diastolic=92, pulse=84, temperature=99.1,
+                    oxygen_saturation=97, respiratory_rate=18, weight_kg=74.0, height_cm=176.0, bmi=23.9,
+                    is_abnormal=True, abnormal_notes="Elevated systolic and diastolic BP", recorded_at=datetime.utcnow() - timedelta(days=5)
+                ),
+                PatientVital(
+                    global_patient_id=gp1.id, patient_grn=gp1.grn, hospital_id="HOSP-002",
+                    blood_pressure_systolic=132, blood_pressure_diastolic=84, pulse=75, temperature=98.6,
+                    oxygen_saturation=99, respiratory_rate=16, weight_kg=73.2, height_cm=176.0, bmi=23.6,
+                    is_abnormal=False, recorded_at=datetime.utcnow() - timedelta(hours=6)
+                ),
+            ])
+            db.commit()
+
+        # 10. Seed Family Contacts
+        if db.query(FamilyContact).count() == 0:
+            db.add_all([
+                FamilyContact(
+                    global_patient_id=gp1.id, patient_grn=gp1.grn, full_name="Sundaram Kumar",
+                    relation="Father", phone="+91 98401 23456", email="sundaram.k@example.com",
+                    address="42 Anna Nagar, Chennai", is_emergency_contact=True, is_primary=True
+                ),
+                FamilyContact(
+                    global_patient_id=gp1.id, patient_grn=gp1.grn, full_name="Pooja Kumar",
+                    relation="Sister", phone="+91 98401 88888", email="pooja.k@example.com",
+                    address="Indiranagar, Bengaluru", is_emergency_contact=True, is_primary=False
+                )
+            ])
+            db.commit()
+
+        # 11. Seed Lab Reports with Reference Ranges
+        if db.query(LabReport).count() == 0:
+            db.add_all([
+                LabReport(
+                    global_patient_id=gp1.id, patient_id=1, hospital_id="HOSP-001",
+                    test_name="Hemoglobin (Hb)", test_category="Hematology", result="15.2 g/dL (Normal)",
+                    value=15.2, unit="g/dL", reference_range="13.5 - 17.5 g/dL", status="Completed",
+                    is_abnormal=False, abnormal_flag="NORMAL", report_date=date.today() - timedelta(days=20)
+                ),
+                LabReport(
+                    global_patient_id=gp1.id, patient_id=1, hospital_id="HOSP-002",
+                    test_name="Fasting Blood Glucose", test_category="Biochemistry", result="92 mg/dL (Normal)",
+                    value=92.0, unit="mg/dL", reference_range="70 - 100 mg/dL", status="Completed",
+                    is_abnormal=False, abnormal_flag="NORMAL", report_date=date.today() - timedelta(days=5)
+                ),
+                LabReport(
+                    global_patient_id=gp1.id, patient_id=1, hospital_id="HOSP-002",
+                    test_name="Total Serum Cholesterol", test_category="Lipid Profile", result="185 mg/dL (Desirable)",
+                    value=185.0, unit="mg/dL", reference_range="< 200 mg/dL", status="Completed",
+                    is_abnormal=False, abnormal_flag="NORMAL", report_date=date.today() - timedelta(days=5)
+                ),
+                LabReport(
+                    global_patient_id=gp1.id, patient_id=1, hospital_id="HOSP-002",
+                    test_name="Serum Creatinine", test_category="Renal Panel", result="0.9 mg/dL (Normal)",
+                    value=0.9, unit="mg/dL", reference_range="0.7 - 1.3 mg/dL", status="Completed",
+                    is_abnormal=False, abnormal_flag="NORMAL", report_date=date.today() - timedelta(days=5)
+                ),
+                LabReport(
+                    global_patient_id=gp1.id, patient_id=1, hospital_id="HOSP-001",
+                    test_name="Platelet Count", test_category="Hematology", result="280 x10^3/uL (Normal)",
+                    value=280.0, unit="x10^3/uL", reference_range="150 - 450 x10^3/uL", status="Completed",
+                    is_abnormal=False, abnormal_flag="NORMAL", report_date=date.today() - timedelta(days=20)
+                )
+            ])
+            db.commit()
+
+        # 12. Consents
         if db.query(PatientConsent).count() == 0:
             db.add_all([
                 PatientConsent(global_patient_id=gp1.id, requesting_hospital_id="HOSP-002", consent_type="cross_hospital_access", status="granted", notes="Patient consented to share medical records between Chennai and Bengaluru facilities."),
@@ -390,33 +697,14 @@ def require_roles(*roles):
         return user
     return checker
 
-def get_client_ip(request: Request | None) -> str:
-    if not request:
-        return "127.0.0.1"
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "127.0.0.1"
-
-def log_audit(db: Session, event: str, user_id: int | None = None, hospital_code: str | None = None, ip_address: str | None = None, details: str | None = None):
-    try:
-        audit = AuthenticationAuditLog(
-            user_id=user_id, event=event, hospital_code=hospital_code,
-            ip_address=ip_address, details=details, created_at=datetime.utcnow()
-        )
-        db.add(audit)
-        db.commit()
-    except Exception:
-        db.rollback()
-
 # ----------------- Base System Endpoints -----------------
 @app.get("/")
 def root():
     return {
         "name": "X7 MediCore HMS API",
-        "version": "3.0.0",
+        "version": "3.5.0",
         "status": "operational",
-        "system": "Global Patient Identity (GRN) & Multi-Hospital Medical History",
+        "system": "PostgreSQL-Based Medical Records & Central Global Patient Identity (GRN)",
         "docs": "/docs"
     }
 
@@ -433,7 +721,7 @@ def list_hospitals(
     query = db.query(Hospital)
     if not include_inactive:
         query = query.filter(Hospital.is_active.is_(True))
-    return query.order_by(Hospital.name.asc()).all()
+    return query.order_by(Hospital.code.asc()).all()
 
 @app.post("/api/v1/hospitals", response_model=HospitalOut, status_code=201)
 def create_hospital(
@@ -506,22 +794,12 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 
     # Resolution: Email or Patient GRN
     user = None
-    is_grn_login = identifier.upper().startswith("XM-GRN-") or identifier.upper().startswith("GRN")
-
-    if is_grn_login:
+    if identifier.upper().startswith("XM-GRN-") or identifier.upper().startswith("GRN-"):
         gp = db.query(GlobalPatient).filter(GlobalPatient.grn == identifier.upper()).first()
-        if gp:
-            account = db.query(PatientAccount).filter(PatientAccount.global_patient_id == gp.id).first()
-            if account:
-                user = db.query(User).filter(User.id == account.user_id).first()
+        if gp and gp.accounts:
+            user = db.query(User).filter(User.id == gp.accounts[0].user_id).first()
     else:
         user = db.query(User).filter(User.email == identifier.lower()).first()
-        if not user:
-            gp = db.query(GlobalPatient).filter(GlobalPatient.grn == identifier.upper()).first()
-            if gp:
-                account = db.query(PatientAccount).filter(PatientAccount.global_patient_id == gp.id).first()
-                if account:
-                    user = db.query(User).filter(User.id == account.user_id).first()
 
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
         db.add(LoginAttempt(identifier=identifier.lower(), ip_address=client_ip, success=False, attempted_at=datetime.utcnow()))
@@ -603,7 +881,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
               details=f"User {user.email} signed in via {portal} portal")
 
     user_out = UserOut(id=user.id, email=user.email, full_name=user.full_name, role=user.role,
-                       hospital_id=hospital_code or user.hospital_id, grn=grn)
+                       hospital_id=hospital_code or user.hospital_id, is_active=user.is_active)
 
     return LoginResponse(
         access_token=access_token, refresh_token=refresh_token, token_type="bearer",
@@ -648,13 +926,8 @@ def logout(request: Request, credentials: HTTPAuthorizationCredentials | None = 
 
 @app.get("/api/v1/auth/me", response_model=UserOut)
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    grn = None
-    if user.role == "patient":
-        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
-        if account and account.global_patient:
-            grn = account.global_patient.grn
     return UserOut(id=user.id, email=user.email, full_name=user.full_name, role=user.role,
-                   hospital_id=user.hospital_id, grn=grn)
+                   hospital_id=user.hospital_id, is_active=user.is_active)
 
 @app.post("/api/v1/auth/forgot-password", response_model=ForgotPasswordResponse)
 def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
@@ -712,11 +985,6 @@ def register_patient(
     user: User = Depends(require_roles("super_admin", "hospital_admin", "doctor", "nurse")),
     request: Request = None
 ):
-    """
-    Register a patient into the centralized Global Patient Identity System.
-    Generates a permanent unique GRN (e.g. XM-GRN-000003) and links to registering hospital.
-    """
-    # 1. Prevent accidental duplicate registrations
     if payload.email:
         existing = db.query(GlobalPatient).filter(GlobalPatient.email == payload.email.lower().strip()).first()
         if existing:
@@ -732,7 +1000,6 @@ def register_patient(
                 detail=f"Patient with phone {payload.phone} already has GRN: {existing_phone.grn}. Search by GRN to add hospital visits."
             )
 
-    # 2. Concurrency-safe GRN generation
     grn = generate_next_grn(db)
     hosp_code = payload.hospital_code or user.hospital_id or "HOSP-001"
     hospital = db.query(Hospital).filter(Hospital.code == hosp_code).first()
@@ -752,7 +1019,16 @@ def register_patient(
     db.commit()
     db.refresh(gp)
 
-    # 3. Create Patient-Hospital Link
+    prof = PatientProfile(
+        global_patient_id=gp.id,
+        photo_url=f"/api/v1/patients/{gp.grn}/photo",
+        age=calculate_age(gp.date_of_birth),
+        insurance_provider="Star Health Comprehensive",
+        insurance_policy_number=f"SH-{grn.replace('XM-GRN-', '')}",
+        insurance_valid_till=date(2027, 12, 31)
+    )
+    db.add(prof)
+
     if hospital:
         link = PatientHospitalLink(
             global_patient_id=gp.id,
@@ -763,10 +1039,8 @@ def register_patient(
         )
         db.add(link)
 
-        # Also create local legacy patient record for full module backwards-compatibility
         local_p = Patient(
             patient_code=grn,
-            global_patient_id=gp.id,
             full_name=gp.full_name,
             date_of_birth=gp.date_of_birth,
             gender=gp.gender,
@@ -778,8 +1052,8 @@ def register_patient(
             hospital_id=hosp_code
         )
         db.add(local_p)
-        db.commit()
 
+    db.commit()
     log_medical_audit(db, user, gp.id, hosp_code, "CREATE", "global_patients", str(gp.id),
                       None, f"Registered global patient {gp.full_name} ({grn})")
 
@@ -788,7 +1062,8 @@ def register_patient(
         gender=gp.gender, phone=gp.phone, email=gp.email, blood_group=gp.blood_group,
         emergency_contact=gp.emergency_contact, primary_hospital_code=hosp_code,
         primary_hospital_name=hospital.name if hospital else hosp_code,
-        linked_hospitals=[hosp_code], is_linked_to_current_hospital=True, consent_status="granted"
+        linked_hospitals=[hosp_code], is_linked_to_current_hospital=True, consent_status="granted",
+        photo_url=prof.photo_url
     )
 
 @app.get("/api/v1/patients/search", response_model=list[PatientSearchResult])
@@ -798,10 +1073,6 @@ def search_patients(
     db: Session = Depends(get_db),
     user: User = Depends(current_user)
 ):
-    """
-    Search patients by GRN, Full Name, Phone number, or local code.
-    Identifies whether the patient is already linked to the staff's hospital.
-    """
     query_str = (q or query or "").strip()
     if not query_str:
         return []
@@ -843,10 +1114,108 @@ def search_patients(
             emergency_contact=gp.emergency_contact, primary_hospital_code=primary_hosp,
             linked_hospitals=linked_hospitals,
             is_linked_to_current_hospital=is_linked,
-            consent_status=consent_status
+            consent_status=consent_status,
+            photo_url=gp.profile.photo_url if gp.profile else f"/api/v1/patients/{gp.grn}/photo"
         ))
 
     return results
+
+# ----------------- SECTION 2: Patient Profile & Photos -----------------
+@app.get("/api/v1/patients/me", response_model=PatientProfileOut)
+@app.get("/api/v1/patient/profile", response_model=PatientProfileOut)
+def get_my_patient_profile(
+    grn: str | None = Query(None),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    gp = None
+    if user.role == "patient":
+        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
+        if account and account.global_patient:
+            gp = account.global_patient
+    elif grn:
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+
+    if not gp:
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == "XM-GRN-000001").first()
+        if not gp:
+            raise HTTPException(status_code=404, detail="Patient profile not found.")
+
+    log_medical_access(db, user, gp.id, user.hospital_id, "patient_profile", gp.grn, "VIEW", request)
+    return build_patient_profile_out(gp, user=user)
+
+@app.patch("/api/v1/patients/me", response_model=PatientProfileOut)
+def update_my_patient_profile(
+    payload: PatientProfileUpdate,
+    grn: str | None = Query(None),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    gp = None
+    if user.role == "patient":
+        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
+        if account and account.global_patient:
+            gp = account.global_patient
+    elif grn:
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+
+    if not gp:
+        gp = db.query(GlobalPatient).first()
+        if not gp:
+            raise HTTPException(status_code=404, detail="Patient profile not found.")
+
+    if payload.full_name is not None:
+        gp.full_name = payload.full_name.strip()
+    if payload.date_of_birth is not None:
+        gp.date_of_birth = payload.date_of_birth
+    if payload.gender is not None:
+        gp.gender = payload.gender
+    if payload.phone is not None:
+        gp.phone = payload.phone.strip()
+    if payload.email is not None:
+        gp.email = payload.email.strip().lower()
+    if payload.address is not None:
+        gp.address = payload.address
+    if payload.emergency_contact is not None:
+        gp.emergency_contact = payload.emergency_contact
+    if payload.blood_group is not None:
+        gp.blood_group = payload.blood_group
+
+    prof = gp.profile
+    if not prof:
+        prof = PatientProfile(
+            global_patient_id=gp.id,
+            photo_url=f"/api/v1/patients/{gp.grn}/photo",
+            age=calculate_age(gp.date_of_birth),
+            marital_status=payload.marital_status or "Single",
+            occupation=payload.occupation or "Professional",
+            insurance_provider=payload.insurance_provider or "Star Health Comprehensive",
+            insurance_policy_number=payload.insurance_policy_number or "SH-MED-8492019",
+            insurance_valid_till=payload.insurance_valid_till or date(2027, 8, 31)
+        )
+        db.add(prof)
+    else:
+        if payload.marital_status is not None:
+            prof.marital_status = payload.marital_status
+        if payload.occupation is not None:
+            prof.occupation = payload.occupation
+        if payload.insurance_provider is not None:
+            prof.insurance_provider = payload.insurance_provider
+        if payload.insurance_policy_number is not None:
+            prof.insurance_policy_number = payload.insurance_policy_number
+        if payload.insurance_valid_till is not None:
+            prof.insurance_valid_till = payload.insurance_valid_till
+        prof.age = calculate_age(gp.date_of_birth)
+        prof.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(gp)
+
+    log_medical_audit(db, user, gp.id, user.hospital_id, "UPDATE", "patient_profiles", str(gp.id),
+                      None, f"Updated profile for {gp.grn}")
+    return build_patient_profile_out(gp, user=user)
 
 @app.get("/api/v1/patients/{grn}", response_model=PatientSearchResult)
 def get_patient_by_grn(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
@@ -866,29 +1235,9 @@ def get_patient_by_grn(grn: str, db: Session = Depends(get_db), user: User = Dep
         primary_hospital_code=linked_hospitals[0] if linked_hospitals else user.hospital_id,
         linked_hospitals=linked_hospitals,
         is_linked_to_current_hospital=is_linked,
-        consent_status="granted" if is_linked else "pending"
+        consent_status="granted" if is_linked else "pending",
+        photo_url=gp.profile.photo_url if gp.profile else f"/api/v1/patients/{gp.grn}/photo"
     )
-
-@app.get("/api/v1/patients/{grn}/hospitals")
-def get_patient_hospitals(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
-    if not gp:
-        raise HTTPException(status_code=404, detail="Patient not found.")
-
-    links = []
-    for link in gp.hospital_links:
-        if link.hospital:
-            links.append({
-                "hospital_id": link.hospital.id,
-                "hospital_code": link.hospital.code,
-                "hospital_name": link.hospital.name,
-                "location": link.hospital.location,
-                "local_patient_id": link.local_patient_id,
-                "consent_status": link.consent_status,
-                "linked_date": link.linked_date.isoformat(),
-                "is_active": link.is_active
-            })
-    return links
 
 @app.post("/api/v1/patients/{grn}/link-hospital", status_code=201)
 def link_patient_to_hospital(
@@ -898,7 +1247,6 @@ def link_patient_to_hospital(
     user: User = Depends(require_roles("super_admin", "hospital_admin", "doctor", "nurse")),
     request: Request = None
 ):
-    """Link an existing patient with permanent GRN to a new hospital with consent confirmation."""
     gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
     if not gp:
         raise HTTPException(status_code=404, detail="Patient GRN not found.")
@@ -936,7 +1284,771 @@ def link_patient_to_hospital(
         "grn": gp.grn
     }
 
-# ----------------- SECTION 2: Medical History, Conditions & Allergies -----------------
+@app.post("/api/v1/patients/{grn}/photo")
+async def upload_patient_photo(
+    grn: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in [".jpg", ".jpeg", ".png", ".webp"]:
+        raise HTTPException(status_code=400, detail="Invalid photo format. Use JPG, PNG, or WEBP.")
+
+    photo_filename = f"{gp.grn}_avatar{ext}"
+    photo_path = os.path.join(PHOTOS_DIR, photo_filename)
+    contents = await file.read()
+    with open(photo_path, "wb") as f:
+        f.write(contents)
+
+    prof = gp.profile
+    if not prof:
+        prof = PatientProfile(
+            global_patient_id=gp.id,
+            photo_url=f"/api/v1/patients/{gp.grn}/photo",
+            age=calculate_age(gp.date_of_birth)
+        )
+        db.add(prof)
+    else:
+        prof.photo_url = f"/api/v1/patients/{gp.grn}/photo"
+        prof.updated_at = datetime.utcnow()
+
+    db.commit()
+    log_medical_audit(db, user, gp.id, user.hospital_id, "UPDATE", "patient_profiles", str(gp.id),
+                      None, f"Updated profile photo for {gp.grn}")
+    return {"photo_url": f"/api/v1/patients/{gp.grn}/photo", "message": "Profile photo updated successfully."}
+
+@app.get("/api/v1/patients/{grn}/photo")
+def get_patient_photo(grn: str, db: Session = Depends(get_db)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+
+    for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+        candidate = os.path.join(PHOTOS_DIR, f"{gp.grn}_avatar{ext}")
+        if os.path.exists(candidate):
+            media_type = "image/png" if ext == ".png" else "image/jpeg"
+            return FileResponse(candidate, media_type=media_type)
+
+    # Return default SVG avatar
+    svg_avatar = f'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+      <defs>
+        <linearGradient id="avatarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#2563eb" />
+          <stop offset="100%" stop-color="#ec4899" />
+        </linearGradient>
+      </defs>
+      <rect width="200" height="200" fill="url(#avatarGrad)" rx="100" />
+      <text x="50%" y="54%" font-family="Arial, sans-serif" font-size="76" font-weight="bold" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">
+        {gp.full_name[0] if gp.full_name else 'P'}
+      </text>
+    </svg>'''
+    return Response(content=svg_avatar, media_type="image/svg+xml")
+
+# ----------------- SECTION 3: Treatments & Encounters -----------------
+@app.get("/api/v1/patients/{grn}/treatments", response_model=list[TreatmentOut])
+def get_patient_treatments(
+    grn: str,
+    status: str | None = Query(None),
+    hospital_id: str | None = Query(None),
+    query: str | None = Query(None),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    log_medical_access(db, user, gp.id, user.hospital_id, "treatments", gp.grn, "VIEW", request)
+
+    q = db.query(Treatment).filter(Treatment.global_patient_id == gp.id)
+
+    if status:
+        q = q.filter(Treatment.status.ilike(f"%{status.strip()}%"))
+    if hospital_id:
+        q = q.filter(Treatment.hospital_id == hospital_id.strip())
+    if query:
+        q = q.filter(or_(
+            Treatment.diagnosis.ilike(f"%{query}%"),
+            Treatment.chief_complaint.ilike(f"%{query}%"),
+            Treatment.description.ilike(f"%{query}%")
+        ))
+    if start_date:
+        q = q.filter(Treatment.visit_date >= datetime.combine(start_date, datetime.min.time()))
+    if end_date:
+        q = q.filter(Treatment.visit_date <= datetime.combine(end_date, datetime.max.time()))
+
+    treatments = q.order_by(Treatment.visit_date.desc()).all()
+    results = [build_treatment_out(t, db) for t in treatments]
+    return results
+
+@app.post("/api/v1/treatments", response_model=TreatmentOut, status_code=201)
+def create_treatment(
+    payload: TreatmentCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin")),
+    request: Request = None
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == payload.patient_grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail=f"No patient registered under GRN: {payload.patient_grn}")
+
+    hosp_code = user.hospital_id or "HOSP-001"
+    doc = db.query(Doctor).filter(Doctor.email == user.email).first()
+    if not doc:
+        doc = db.query(Doctor).filter(Doctor.hospital_id == hosp_code).first()
+        if not doc:
+            doc = Doctor(full_name=user.full_name, specialization="General Medicine", hospital_id=hosp_code, is_active=True)
+            db.add(doc); db.commit(); db.refresh(doc)
+
+    treatment_code = generate_treatment_code(db)
+    visit_time = payload.visit_date or datetime.utcnow()
+
+    treatment = Treatment(
+        treatment_code=treatment_code,
+        global_patient_id=gp.id,
+        doctor_id=doc.id,
+        hospital_id=hosp_code,
+        visit_date=visit_time,
+        chief_complaint=payload.chief_complaint.strip(),
+        symptoms=payload.symptoms.strip(),
+        clinical_observations=payload.clinical_observations.strip(),
+        diagnosis=payload.diagnosis.strip(),
+        description=payload.description.strip(),
+        procedures_performed=payload.procedures_performed.strip(),
+        follow_up_instructions=payload.follow_up_instructions.strip(),
+        next_appointment_date=payload.next_appointment_date,
+        status=payload.status
+    )
+    db.add(treatment)
+    db.commit()
+    db.refresh(treatment)
+
+    # Initial history log
+    hist = TreatmentHistory(
+        treatment_id=treatment.id,
+        changed_by_user_id=user.id,
+        action="CREATED",
+        status_before=None,
+        status_after=treatment.status,
+        change_summary=f"Clinical treatment initiated for {treatment.diagnosis}."
+    )
+    db.add(hist)
+
+    # Add to Medical History
+    history_entry = MedicalHistory(
+        global_patient_id=gp.id,
+        hospital_id=hosp_code,
+        doctor_id=doc.id,
+        treatment_id=treatment.id,
+        record_type="diagnosis",
+        title=treatment.diagnosis,
+        description=f"Complaint: {treatment.chief_complaint}. Description: {treatment.description}",
+        diagnosed_date=visit_time.date() if isinstance(visit_time, datetime) else date.today(),
+        severity="moderate",
+        status="active" if treatment.status in ["In Progress", "Active", "Scheduled"] else "resolved"
+    )
+    db.add(history_entry)
+
+    # Prescriptions
+    for rx in payload.prescriptions:
+        p = Prescription(
+            treatment_id=treatment.id,
+            global_patient_id=gp.id,
+            doctor_id=doc.id,
+            hospital_id=hosp_code,
+            medication=rx.medication.strip(),
+            dosage=rx.dosage.strip(),
+            instructions=rx.instructions.strip(),
+            prescribed_date=visit_time.date(),
+            status="active"
+        )
+        db.add(p)
+
+    db.commit()
+    log_medical_audit(db, user, gp.id, hosp_code, "CREATE", "treatments", str(treatment.id),
+                      None, f"Created treatment {treatment_code}: {treatment.diagnosis}")
+
+    return build_treatment_out(treatment, db)
+
+@app.get("/api/v1/treatments", response_model=list[TreatmentOut])
+def list_treatments(
+    status: str | None = Query(None),
+    patient_grn: str | None = Query(None),
+    limit: int = Query(50, le=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    query = db.query(Treatment)
+    if user.role == "patient":
+        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
+        if not account or not account.global_patient:
+            return []
+        query = query.filter(Treatment.global_patient_id == account.global_patient_id)
+    elif user.role != "super_admin":
+        query = query.filter(Treatment.hospital_id == user.hospital_id)
+
+    if patient_grn:
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == patient_grn.upper().strip()).first()
+        if gp:
+            query = query.filter(Treatment.global_patient_id == gp.id)
+
+    if status:
+        query = query.filter(Treatment.status.ilike(f"%{status.strip()}%"))
+
+    treatments = query.order_by(Treatment.visit_date.desc()).limit(limit).all()
+    return [build_treatment_out(t, db) for t in treatments]
+
+@app.get("/api/v1/treatments/{treatment_id}", response_model=TreatmentOut)
+def get_treatment_details(
+    treatment_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    t = db.query(Treatment).filter(Treatment.id == treatment_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Treatment record not found.")
+
+    gp = t.global_patient
+    log_medical_access(db, user, gp.id, t.hospital_id, "treatment", str(t.id), "VIEW", request)
+    return build_treatment_out(t, db)
+
+@app.patch("/api/v1/treatments/{treatment_id}", response_model=TreatmentOut)
+def update_treatment(
+    treatment_id: int,
+    payload: TreatmentUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin")),
+    request: Request = None
+):
+    t = db.query(Treatment).filter(Treatment.id == treatment_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Treatment record not found.")
+
+    old_diag = t.diagnosis
+    old_status = t.status
+
+    # Record clinical note or audit trail if correction made
+    if payload.correction_reason:
+        note = TreatmentNote(
+            treatment_id=t.id,
+            doctor_id=user.id,
+            note_type="correction",
+            note_text=f"Clinical Update by {user.full_name}: {payload.correction_reason}"
+        )
+        db.add(note)
+
+    for field, val in payload.model_dump(exclude_unset=True, exclude={"correction_reason"}).items():
+        if val is not None:
+            setattr(t, field, val)
+
+    # If status changed, record a TreatmentHistory transition
+    if payload.status and payload.status != old_status:
+        hist = TreatmentHistory(
+            treatment_id=t.id,
+            changed_by_user_id=user.id,
+            action="STATUS_CHANGE",
+            status_before=old_status,
+            status_after=t.status,
+            change_summary=payload.correction_reason or f"Treatment status transitioned from {old_status} to {t.status}."
+        )
+        db.add(hist)
+
+    t.updated_at = datetime.utcnow()
+    db.commit()
+
+    log_medical_audit(db, user, t.global_patient_id, t.hospital_id, "UPDATE", "treatments", str(t.id),
+                      f"Status: {old_status}, Diag: {old_diag}",
+                      f"Status: {t.status}, Diag: {t.diagnosis}, Reason: {payload.correction_reason or 'Direct Update'}")
+
+    return build_treatment_out(t, db)
+
+@app.post("/api/v1/treatments/{treatment_id}/notes", response_model=TreatmentNoteOut, status_code=201)
+def add_treatment_note(
+    treatment_id: int,
+    payload: TreatmentNoteCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("doctor", "nurse", "hospital_admin", "super_admin")),
+    request: Request = None
+):
+    treatment = db.query(Treatment).filter(Treatment.id == treatment_id).first()
+    if not treatment:
+        raise HTTPException(status_code=404, detail="Treatment record not found.")
+
+    note = TreatmentNote(
+        treatment_id=treatment.id,
+        doctor_id=user.id,
+        note_type=payload.note_type,
+        note_text=payload.note_text
+    )
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+
+    log_medical_audit(db, user, treatment.global_patient_id, treatment.hospital_id, "CREATE",
+                      "treatment_notes", str(note.id), None, f"Added {payload.note_type} note: {payload.note_text[:60]}")
+    return note
+
+# ----------------- SECTION 4: Medical Documents & Uploads -----------------
+async def _save_treatment_document_file(
+    treatment_id: int,
+    file: UploadFile,
+    file_category: str,
+    description: str,
+    document_name: str,
+    db: Session,
+    user: User,
+):
+    treatment = db.query(Treatment).filter(Treatment.id == treatment_id).first()
+    if not treatment:
+        raise HTTPException(status_code=404, detail="Treatment record not found.")
+
+    gp = treatment.global_patient
+    ext = os.path.splitext(file.filename)[1].lower()
+    allowed_exts = {".jpg", ".jpeg", ".png", ".pdf", ".webp", ".dcm"}
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail="Invalid format. Supported formats: PDF, JPG, JPEG, PNG, WEBP, DICOM.")
+
+    doc_code = generate_document_code(db)
+    stored_name = f"{treatment.treatment_code}_{uuid.uuid4().hex[:8]}{ext}"
+    dest_path = os.path.join(DOCUMENTS_DIR, stored_name)
+
+    content = await file.read()
+    file_size = len(content)
+    if file_size > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size exceeds maximum allowed limit of 20MB.")
+
+    with open(dest_path, "wb") as f:
+        f.write(content)
+
+    doc = MedicalDocument(
+        document_code=doc_code,
+        global_patient_id=gp.id,
+        treatment_id=treatment.id,
+        hospital_id=treatment.hospital_id,
+        patient_grn=gp.grn,
+        document_name=document_name or file.filename or "Medical Document",
+        original_filename=file.filename or "document",
+        stored_filename=stored_name,
+        file_type=file.content_type or "application/octet-stream",
+        file_category=file_category,
+        file_size=file_size,
+        file_path=dest_path,
+        description=description,
+        uploaded_by_user_id=user.id,
+        upload_date=datetime.utcnow()
+    )
+    db.add(doc)
+
+    # Also keep treatment_attachments entry for backwards compatibility
+    att = TreatmentAttachment(
+        attachment_code=doc_code,
+        treatment_id=treatment.id,
+        global_patient_id=gp.id,
+        hospital_id=treatment.hospital_id,
+        original_filename=file.filename or "document",
+        stored_filename=stored_name,
+        file_type=file.content_type or "application/octet-stream",
+        file_category=file_category,
+        file_size=file_size,
+        file_path=dest_path,
+        description=description,
+        uploaded_by_user_id=user.id,
+        upload_date=datetime.utcnow()
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(doc)
+    db.refresh(att)
+
+    log_medical_audit(db, user, gp.id, treatment.hospital_id, "CREATE", "medical_documents", str(doc.id),
+                      None, f"Uploaded {file_category}: {file.filename}")
+    return doc, att
+
+@app.post("/api/v1/treatments/{treatment_id}/documents", response_model=MedicalDocumentOut, status_code=201)
+async def upload_treatment_document(
+    treatment_id: int,
+    file: UploadFile = File(...),
+    file_category: str = Form("Other Medical Documents"),
+    description: str = Form(""),
+    document_name: str = Form(""),
+    patient_grn: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    doc, _ = await _save_treatment_document_file(treatment_id, file, file_category, description, document_name, db, user)
+    return MedicalDocumentOut(
+        id=doc.id,
+        document_code=doc.document_code,
+        treatment_id=doc.treatment_id,
+        patient_grn=doc.patient_grn,
+        hospital_id=doc.hospital_id,
+        document_name=doc.document_name,
+        original_filename=doc.original_filename,
+        file_type=doc.file_type,
+        file_category=doc.file_category,
+        file_size=doc.file_size,
+        description=doc.description,
+        upload_date=doc.upload_date,
+        download_url=f"/api/v1/documents/{doc.id}"
+    )
+
+@app.post("/api/v1/treatments/{treatment_id}/attachments", response_model=AttachmentOut, status_code=201)
+async def upload_treatment_attachment(
+    treatment_id: int,
+    file: UploadFile = File(...),
+    file_category: str = Form("Other Medical Documents"),
+    description: str = Form(""),
+    document_name: str = Form(""),
+    patient_grn: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    doc, att = await _save_treatment_document_file(treatment_id, file, file_category, description, document_name, db, user)
+    return AttachmentOut(
+        id=att.id,
+        attachment_code=att.attachment_code,
+        treatment_id=att.treatment_id,
+        patient_grn=doc.patient_grn,
+        hospital_id=att.hospital_id,
+        original_filename=att.original_filename,
+        file_type=att.file_type,
+        file_category=att.file_category,
+        file_size=att.file_size,
+        description=att.description,
+        upload_date=att.upload_date,
+        download_url=f"/api/v1/attachments/{att.id}"
+    )
+
+@app.get("/api/v1/documents/{document_id}")
+@app.get("/api/v1/attachments/{document_id}")
+def download_medical_document(document_id: int, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
+    doc = db.query(MedicalDocument).filter(MedicalDocument.id == document_id).first()
+    if not doc:
+        att = db.query(TreatmentAttachment).filter(TreatmentAttachment.id == document_id).first()
+        if not att:
+            raise HTTPException(status_code=404, detail="Medical document not found.")
+        file_path = att.file_path
+        filename = att.original_filename
+        file_type = att.file_type
+        gp_id = att.global_patient_id
+        hosp_id = att.hospital_id
+    else:
+        file_path = doc.file_path
+        filename = doc.original_filename
+        file_type = doc.file_type
+        gp_id = doc.global_patient_id
+        hosp_id = doc.hospital_id
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Physical document missing from secure storage.")
+
+    log_medical_access(db, user, gp_id, hosp_id, "medical_document", str(document_id), "DOWNLOAD", request)
+    return FileResponse(path=file_path, media_type=file_type, filename=filename)
+
+@app.delete("/api/v1/documents/{document_id}")
+def delete_medical_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    doc = db.query(MedicalDocument).filter(MedicalDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Medical document not found.")
+
+    doc_name = doc.document_name
+    gp_id = doc.global_patient_id
+    hosp_id = doc.hospital_id
+
+    if doc.file_path and os.path.exists(doc.file_path):
+        try:
+            os.remove(doc.file_path)
+        except Exception:
+            pass
+
+    db.delete(doc)
+    db.commit()
+
+    log_medical_audit(db, user, gp_id, hosp_id, "DELETE", "medical_documents", str(document_id),
+                      f"Deleted: {doc_name}", None)
+    return {"message": f"Medical document '{doc_name}' deleted successfully."}
+
+@app.get("/api/v1/patients/{grn}/attachments", response_model=list[AttachmentOut])
+@app.get("/api/v1/patients/{grn}/documents", response_model=list[MedicalDocumentOut])
+def get_patient_documents(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    log_medical_access(db, user, gp.id, user.hospital_id, "documents", gp.grn, "VIEW", request)
+
+    docs = db.query(MedicalDocument).filter(MedicalDocument.global_patient_id == gp.id, MedicalDocument.is_active.is_(True)).order_by(MedicalDocument.upload_date.desc()).all()
+    results = [
+        MedicalDocumentOut(
+            id=d.id,
+            document_code=d.document_code,
+            treatment_id=d.treatment_id,
+            patient_grn=d.patient_grn,
+            hospital_id=d.hospital_id,
+            document_name=d.document_name,
+            original_filename=d.original_filename,
+            file_type=d.file_type,
+            file_category=d.file_category,
+            file_size=d.file_size,
+            description=d.description,
+            upload_date=d.upload_date,
+            download_url=f"/api/v1/documents/{d.id}"
+        )
+        for d in docs
+    ]
+    return results
+
+# ----------------- SECTION 5: Health Analysis & Vitals -----------------
+@app.get("/api/v1/patients/{grn}/health-analysis", response_model=HealthAnalysisOut)
+def get_patient_health_analysis(
+    grn: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    log_medical_access(db, user, gp.id, user.hospital_id, "health_analysis", gp.grn, "VIEW", request)
+
+    vitals = db.query(PatientVital).filter(PatientVital.global_patient_id == gp.id).order_by(PatientVital.recorded_at.asc()).all()
+    vitals_out = [PatientVitalOut.model_validate(v) for v in vitals]
+    current_vital = vitals_out[-1] if vitals_out else None
+
+    lab_reports = db.query(LabReport).filter(or_(
+        LabReport.global_patient_id == gp.id,
+        LabReport.patient_id.in_([p.id for p in gp.accounts])
+    )).order_by(LabReport.report_date.desc()).all()
+    lab_reports_out = [LabReportOut.model_validate(lr) for lr in lab_reports]
+
+    abnormal_findings = []
+    if current_vital:
+        if current_vital.blood_pressure_systolic >= 140 or current_vital.blood_pressure_diastolic >= 90:
+            abnormal_findings.append(f"Elevated Blood Pressure: {current_vital.blood_pressure_systolic}/{current_vital.blood_pressure_diastolic} mmHg (Stage 2 Hypertension)")
+        elif current_vital.blood_pressure_systolic >= 130 or current_vital.blood_pressure_diastolic >= 80:
+            abnormal_findings.append(f"Borderline Blood Pressure: {current_vital.blood_pressure_systolic}/{current_vital.blood_pressure_diastolic} mmHg (Stage 1 Hypertension)")
+        if current_vital.pulse >= 100:
+            abnormal_findings.append(f"Elevated Pulse Rate: {current_vital.pulse} bpm (Tachycardia)")
+        elif current_vital.pulse < 55:
+            abnormal_findings.append(f"Low Pulse Rate: {current_vital.pulse} bpm (Bradycardia)")
+        if current_vital.oxygen_saturation < 95:
+            abnormal_findings.append(f"Low Oxygen Saturation (SpO2): {current_vital.oxygen_saturation}%")
+        if current_vital.temperature >= 100.4:
+            abnormal_findings.append(f"Elevated Body Temperature: {current_vital.temperature} °F (Fever)")
+
+    for lr in lab_reports:
+        if lr.is_abnormal:
+            abnormal_findings.append(f"Abnormal Laboratory Result: {lr.test_name} ({lr.result}) [Ref: {lr.reference_range or 'N/A'}]")
+
+    conditions = db.query(MedicalCondition).filter(MedicalCondition.global_patient_id == gp.id).all()
+    allergies = db.query(PatientAllergy).filter(PatientAllergy.global_patient_id == gp.id).all()
+
+    active_rx = db.query(Prescription).filter(
+        Prescription.global_patient_id == gp.id,
+        Prescription.status.in_(["active", "In Progress"])
+    ).all()
+
+    surgeries = db.query(MedicalHistory).filter(
+        MedicalHistory.global_patient_id == gp.id,
+        MedicalHistory.record_type.in_(["surgery", "procedure"])
+    ).all()
+
+    return HealthAnalysisOut(
+        grn=gp.grn,
+        current_vitals=current_vital,
+        historical_vitals=vitals_out,
+        lab_reports=lab_reports_out,
+        abnormal_findings=abnormal_findings,
+        allergies=[PatientAllergyOut.model_validate(a) for a in allergies],
+        conditions=[MedicalConditionOut.model_validate(c) for c in conditions],
+        active_medications=[PrescriptionOut.model_validate(r) for r in active_rx],
+        surgeries=[MedicalHistoryOut.model_validate(s) for s in surgeries]
+    )
+
+@app.post("/api/v1/patients/{grn}/vitals", response_model=PatientVitalOut, status_code=201)
+def record_patient_vitals(
+    grn: str,
+    payload: PatientVitalCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    request: Request = None
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    hosp = user.hospital_id or "HOSP-001"
+    bmi = None
+    if payload.weight_kg and payload.height_cm and payload.height_cm > 0:
+        bmi = round(payload.weight_kg / ((payload.height_cm / 100) ** 2), 1)
+
+    is_abnormal = False
+    notes_list = []
+    if payload.blood_pressure_systolic >= 140 or payload.blood_pressure_diastolic >= 90:
+        is_abnormal = True
+        notes_list.append("Elevated BP")
+    if payload.pulse >= 100 or payload.pulse < 55:
+        is_abnormal = True
+        notes_list.append("Irregular pulse")
+    if payload.oxygen_saturation < 95:
+        is_abnormal = True
+        notes_list.append("Low SpO2")
+    if payload.temperature >= 100.4:
+        is_abnormal = True
+        notes_list.append("Pyrexia")
+
+    abnormal_notes = "; ".join(notes_list) if notes_list else payload.notes
+
+    vital = PatientVital(
+        global_patient_id=gp.id,
+        patient_grn=gp.grn,
+        hospital_id=hosp,
+        blood_pressure_systolic=payload.blood_pressure_systolic,
+        blood_pressure_diastolic=payload.blood_pressure_diastolic,
+        pulse=payload.pulse,
+        temperature=payload.temperature,
+        oxygen_saturation=payload.oxygen_saturation,
+        respiratory_rate=payload.respiratory_rate,
+        weight_kg=payload.weight_kg,
+        height_cm=payload.height_cm,
+        bmi=bmi,
+        is_abnormal=is_abnormal,
+        abnormal_notes=abnormal_notes,
+        recorded_by_user_id=user.id,
+        recorded_at=datetime.utcnow()
+    )
+    db.add(vital)
+    db.commit()
+    db.refresh(vital)
+
+    log_medical_audit(db, user, gp.id, hosp, "CREATE", "patient_vitals", str(vital.id),
+                      None, f"Recorded vitals: BP {vital.blood_pressure_systolic}/{vital.blood_pressure_diastolic}, Pulse {vital.pulse}")
+
+    out = PatientVitalOut.model_validate(vital)
+    out.recorded_by_name = user.full_name
+    return out
+
+@app.get("/api/v1/patients/{grn}/vitals", response_model=list[PatientVitalOut])
+def get_patient_vitals(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+    vitals = db.query(PatientVital).filter(PatientVital.global_patient_id == gp.id).order_by(PatientVital.recorded_at.desc()).all()
+    return [PatientVitalOut.model_validate(v) for v in vitals]
+
+# ----------------- SECTION 6: Family Details & Emergency Contacts -----------------
+@app.get("/api/v1/patients/{grn}/family-contacts", response_model=list[FamilyContactOut])
+def get_family_contacts(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+    contacts = db.query(FamilyContact).filter(FamilyContact.global_patient_id == gp.id).all()
+    return [
+        FamilyContactOut(
+            id=c.id,
+            patient_grn=c.patient_grn,
+            full_name=c.full_name,
+            relationship=c.relation,
+            phone=c.phone,
+            email=c.email,
+            address=c.address,
+            is_emergency_contact=c.is_emergency_contact,
+            is_primary=c.is_primary,
+            created_at=c.created_at
+        )
+        for c in contacts
+    ]
+
+@app.post("/api/v1/patients/{grn}/family-contacts", response_model=FamilyContactOut, status_code=201)
+def add_family_contact(
+    grn: str,
+    payload: FamilyContactCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    contact = FamilyContact(
+        global_patient_id=gp.id,
+        patient_grn=gp.grn,
+        full_name=payload.full_name.strip(),
+        relation=payload.relationship.strip(),
+        phone=payload.phone.strip(),
+        email=payload.email.strip() if payload.email else None,
+        address=payload.address.strip() if payload.address else None,
+        is_emergency_contact=payload.is_emergency_contact,
+        is_primary=payload.is_primary,
+        created_at=datetime.utcnow()
+    )
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+
+    return FamilyContactOut(
+        id=contact.id,
+        patient_grn=contact.patient_grn,
+        full_name=contact.full_name,
+        relationship=contact.relation,
+        phone=contact.phone,
+        email=contact.email,
+        address=contact.address,
+        is_emergency_contact=contact.is_emergency_contact,
+        is_primary=contact.is_primary,
+        created_at=contact.created_at
+    )
+
+@app.delete("/api/v1/family-contacts/{id}")
+def delete_family_contact(id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    c = db.query(FamilyContact).filter(FamilyContact.id == id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Family contact not found.")
+    db.delete(c)
+    db.commit()
+    return {"message": "Family contact removed successfully."}
+
+# ----------------- SECTION 7: QR Patient Card -----------------
+@app.get("/api/v1/patients/{grn}/qr-code")
+def get_patient_qr_code(grn: str, db: Session = Depends(get_db)):
+    """
+    Generate an offline SVG QR code linked to the patient's permanent GRN verification URL.
+    No confidential clinical data is exposed directly inside the QR code.
+    """
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    verify_payload = f"https://x7medicore.local/verify?grn={gp.grn}&system=X7-MediCore"
+    factory = qrcode.image.svg.SvgPathImage
+    img = qrcode.make(verify_payload, image_factory=factory, box_size=10, border=2)
+
+    svg_buffer = io.BytesIO()
+    img.save(svg_buffer)
+    svg_bytes = svg_buffer.getvalue()
+
+    return Response(content=svg_bytes, media_type="image/svg+xml")
+
+# ----------------- SECTION 8: Medical History & Timeline -----------------
 @app.get("/api/v1/patients/{grn}/medical-history")
 def get_medical_history(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
     gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
@@ -995,10 +2107,6 @@ def add_medical_history(
 
 @app.get("/api/v1/patients/{grn}/medical-history/timeline", response_model=list[MedicalTimelineEvent])
 def get_medical_timeline(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
-    """
-    Constructs an interactive, unified chronological timeline of all medical events
-    (treatments, surgeries, diagnoses, lab reports, prescriptions) across all affiliated hospitals.
-    """
     gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
     if not gp:
         raise HTTPException(status_code=404, detail="Patient not found.")
@@ -1054,521 +2162,22 @@ def get_medical_timeline(grn: str, db: Session = Depends(get_db), user: User = D
             status=p.status
         ))
 
-    # Sort descending by date
     events.sort(key=lambda x: x.date, reverse=True)
     return events
 
-# ----------------- SECTION 3 & 4: Treatments Management -----------------
-@app.post("/api/v1/treatments", response_model=TreatmentOut, status_code=201)
-def create_treatment(
-    payload: TreatmentCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin")),
-    request: Request = None
-):
-    """
-    Create a new comprehensive treatment record.
-    Automatically generates Treatment ID, links to permanent GRN, and records into global medical history.
-    """
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == payload.patient_grn.upper().strip()).first()
-    if not gp:
-        raise HTTPException(status_code=404, detail=f"Patient with GRN '{payload.patient_grn}' not found.")
-
-    hosp_code = user.hospital_id or "HOSP-001"
-    hospital = db.query(Hospital).filter(Hospital.code == hosp_code).first()
-
-    # Find doctor record
-    doc = db.query(Doctor).filter(Doctor.email == user.email).first()
-    if not doc:
-        # Fallback to any doctor in this hospital
-        doc = db.query(Doctor).filter(Doctor.hospital_id == hosp_code).first()
-        if not doc:
-            doc = Doctor(full_name=user.full_name, specialization="General Medicine", hospital_id=hosp_code, is_active=True)
-            db.add(doc); db.commit(); db.refresh(doc)
-
-    treatment_code = generate_treatment_code(db)
-    visit_time = payload.visit_date or datetime.utcnow()
-
-    treatment = Treatment(
-        treatment_code=treatment_code,
-        global_patient_id=gp.id,
-        doctor_id=doc.id,
-        hospital_id=hosp_code,
-        visit_date=visit_time,
-        chief_complaint=payload.chief_complaint.strip(),
-        symptoms=payload.symptoms.strip(),
-        clinical_observations=payload.clinical_observations.strip(),
-        diagnosis=payload.diagnosis.strip(),
-        description=payload.description.strip(),
-        procedures_performed=payload.procedures_performed.strip(),
-        follow_up_instructions=payload.follow_up_instructions.strip(),
-        next_appointment_date=payload.next_appointment_date,
-        status=payload.status
-    )
-    db.add(treatment)
-    db.commit()
-    db.refresh(treatment)
-
-    # Automatically add to Medical History
-    history_entry = MedicalHistory(
-        global_patient_id=gp.id,
-        hospital_id=hosp_code,
-        doctor_id=doc.id,
-        treatment_id=treatment.id,
-        record_type="diagnosis",
-        title=treatment.diagnosis,
-        description=f"Visit complaint: {treatment.chief_complaint}. Description: {treatment.description}",
-        diagnosed_date=visit_time.date() if isinstance(visit_time, datetime) else date.today(),
-        severity="moderate",
-        status="active" if treatment.status in ["In Progress", "Scheduled"] else "resolved"
-    )
-    db.add(history_entry)
-
-    # Process prescriptions
-    prescription_outs = []
-    for rx in payload.prescriptions:
-        p = Prescription(
-            treatment_id=treatment.id,
-            global_patient_id=gp.id,
-            doctor_id=doc.id,
-            hospital_id=hosp_code,
-            medication=rx.medication.strip(),
-            dosage=rx.dosage.strip(),
-            instructions=rx.instructions.strip(),
-            prescribed_date=visit_time.date(),
-            status="active"
-        )
-        db.add(p)
-        db.commit()
-        db.refresh(p)
-        prescription_outs.append(PrescriptionOut.model_validate(p))
-
-    db.commit()
-
-    log_medical_audit(db, user, gp.id, hosp_code, "CREATE", "treatments", str(treatment.id),
-                      None, f"Created treatment {treatment_code}: {treatment.diagnosis}")
-
-    return TreatmentOut(
-        id=treatment.id,
-        treatment_code=treatment.treatment_code,
-        global_patient_id=gp.id,
-        patient_grn=gp.grn,
-        patient_name=gp.full_name,
-        doctor_id=doc.id,
-        doctor_name=doc.full_name,
-        doctor_specialization=doc.specialization,
-        hospital_id=hosp_code,
-        hospital_name=hospital.name if hospital else hosp_code,
-        visit_date=treatment.visit_date,
-        chief_complaint=treatment.chief_complaint,
-        symptoms=treatment.symptoms,
-        clinical_observations=treatment.clinical_observations,
-        diagnosis=treatment.diagnosis,
-        description=treatment.description,
-        procedures_performed=treatment.procedures_performed,
-        follow_up_instructions=treatment.follow_up_instructions,
-        next_appointment_date=treatment.next_appointment_date,
-        status=treatment.status,
-        created_at=treatment.created_at,
-        prescriptions=prescription_outs,
-        attachments=[],
-        notes=[]
-    )
-
-@app.get("/api/v1/patients/{grn}/treatments", response_model=list[TreatmentOut])
-def get_patient_treatments(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
-    """
-    Get all authorized historical and current treatments for a patient in chronological order,
-    including records across multi-hospital network.
-    """
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
-    if not gp:
-        raise HTTPException(status_code=404, detail="Patient not found.")
-
-    log_medical_access(db, user, gp.id, user.hospital_id, "treatment_history", gp.grn, "VIEW", request)
-
-    treatments = db.query(Treatment).filter(Treatment.global_patient_id == gp.id).order_by(Treatment.visit_date.desc()).all()
-    results = []
-    for t in treatments:
-        hosp = db.query(Hospital).filter(Hospital.code == t.hospital_id).first()
-        doc = t.doctor
-
-        rx_outs = [PrescriptionOut.model_validate(p) for p in t.prescriptions]
-        att_outs = [
-            AttachmentOut(
-                id=a.id,
-                attachment_code=a.attachment_code,
-                treatment_id=a.treatment_id,
-                patient_grn=gp.grn,
-                hospital_id=a.hospital_id,
-                original_filename=a.original_filename,
-                file_type=a.file_type,
-                file_category=a.file_category,
-                file_size=a.file_size,
-                description=a.description,
-                upload_date=a.upload_date,
-                download_url=f"/api/v1/attachments/{a.id}"
-            )
-            for a in t.attachments
-        ]
-        notes_outs = [TreatmentNoteOut.model_validate(n) for n in t.notes]
-
-        results.append(TreatmentOut(
-            id=t.id,
-            treatment_code=t.treatment_code,
-            global_patient_id=gp.id,
-            patient_grn=gp.grn,
-            patient_name=gp.full_name,
-            doctor_id=doc.id if doc else 0,
-            doctor_name=doc.full_name if doc else "Attending Doctor",
-            doctor_specialization=doc.specialization if doc else "General",
-            hospital_id=t.hospital_id,
-            hospital_name=hosp.name if hosp else t.hospital_id,
-            visit_date=t.visit_date,
-            chief_complaint=t.chief_complaint,
-            symptoms=t.symptoms,
-            clinical_observations=t.clinical_observations,
-            diagnosis=t.diagnosis,
-            description=t.description,
-            procedures_performed=t.procedures_performed,
-            follow_up_instructions=t.follow_up_instructions,
-            next_appointment_date=t.next_appointment_date,
-            status=t.status,
-            created_at=t.created_at,
-            prescriptions=rx_outs,
-            attachments=att_outs,
-            notes=notes_outs
-        ))
-    return results
-
-@app.get("/api/v1/treatments/{treatment_id}", response_model=TreatmentOut)
-def get_treatment_details(treatment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
-    t = db.query(Treatment).filter(Treatment.id == treatment_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Treatment record not found.")
-
-    gp = t.global_patient
-    hosp = db.query(Hospital).filter(Hospital.code == t.hospital_id).first()
-    doc = t.doctor
-
-    log_medical_access(db, user, gp.id, t.hospital_id, "treatment", str(t.id), "VIEW", request)
-
-    rx_outs = [PrescriptionOut.model_validate(p) for p in t.prescriptions]
-    att_outs = [
-        AttachmentOut(
-            id=a.id,
-            attachment_code=a.attachment_code,
-            treatment_id=a.treatment_id,
-            patient_grn=gp.grn,
-            hospital_id=a.hospital_id,
-            original_filename=a.original_filename,
-            file_type=a.file_type,
-            file_category=a.file_category,
-            file_size=a.file_size,
-            description=a.description,
-            upload_date=a.upload_date,
-            download_url=f"/api/v1/attachments/{a.id}"
-        )
-        for a in t.attachments
-    ]
-    notes_outs = [TreatmentNoteOut.model_validate(n) for n in t.notes]
-
-    return TreatmentOut(
-        id=t.id,
-        treatment_code=t.treatment_code,
-        global_patient_id=gp.id,
-        patient_grn=gp.grn,
-        patient_name=gp.full_name,
-        doctor_id=doc.id if doc else 0,
-        doctor_name=doc.full_name if doc else "Attending Doctor",
-        doctor_specialization=doc.specialization if doc else "General",
-        hospital_id=t.hospital_id,
-        hospital_name=hosp.name if hosp else t.hospital_id,
-        visit_date=t.visit_date,
-        chief_complaint=t.chief_complaint,
-        symptoms=t.symptoms,
-        clinical_observations=t.clinical_observations,
-        diagnosis=t.diagnosis,
-        description=t.description,
-        procedures_performed=t.procedures_performed,
-        follow_up_instructions=t.follow_up_instructions,
-        next_appointment_date=t.next_appointment_date,
-        status=t.status,
-        created_at=t.created_at,
-        prescriptions=rx_outs,
-        attachments=att_outs,
-        notes=notes_outs
-    )
-
-@app.patch("/api/v1/treatments/{treatment_id}", response_model=TreatmentOut)
-def update_treatment(
-    treatment_id: int,
-    payload: TreatmentUpdate,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin")),
-    request: Request = None
-):
-    t = db.query(Treatment).filter(Treatment.id == treatment_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Treatment record not found.")
-
-    old_diag = t.diagnosis
-    old_status = t.status
-
-    # Record clinical note or audit trail if correction made
-    if payload.correction_reason:
-        note = TreatmentNote(
-            treatment_id=t.id,
-            doctor_id=user.id,
-            note_type="correction",
-            note_text=f"Clinical Update by {user.full_name}: {payload.correction_reason}"
-        )
-        db.add(note)
-
-    for field, val in payload.model_dump(exclude_unset=True, exclude={"correction_reason"}).items():
-        if val is not None:
-            setattr(t, field, val)
-
-    t.updated_at = datetime.utcnow()
-    db.commit()
-
-    log_medical_audit(db, user, t.global_patient_id, t.hospital_id, "UPDATE", "treatments", str(t.id),
-                      f"Status: {old_status}, Diag: {old_diag}",
-                      f"Status: {t.status}, Diag: {t.diagnosis}, Reason: {payload.correction_reason or 'Direct Update'}")
-
-    return get_treatment_details(treatment_id, db, user, request)
-
-@app.post("/api/v1/treatments/{treatment_id}/notes", response_model=TreatmentNoteOut, status_code=201)
-def add_treatment_note(
-    treatment_id: int,
-    payload: TreatmentNoteCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles("doctor", "nurse", "hospital_admin", "super_admin")),
-    request: Request = None
-):
-    treatment = db.query(Treatment).filter(Treatment.id == treatment_id).first()
-    if not treatment:
-        raise HTTPException(status_code=404, detail="Treatment record not found.")
-
-    note = TreatmentNote(
-        treatment_id=treatment.id,
-        doctor_id=user.id,
-        note_type=payload.note_type,
-        note_text=payload.note_text
-    )
-    db.add(note)
-    db.commit()
-    db.refresh(note)
-
-    log_medical_audit(db, user, treatment.global_patient_id, treatment.hospital_id, "CREATE",
-                      "treatment_notes", str(note.id), None, f"Added {payload.note_type} note: {payload.note_text[:60]}")
-    return note
-
-# ----------------- SECTION 5: Medical Image and Document Upload -----------------
-@app.post("/api/v1/treatments/{treatment_id}/attachments", response_model=AttachmentOut, status_code=201)
-async def upload_attachment(
-    treatment_id: int,
-    file: UploadFile = File(...),
-    file_category: str = Form("Other Medical Documents"),
-    description: str = Form(""),
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles("doctor", "nurse", "lab_technician", "hospital_admin", "super_admin")),
-    request: Request = None
-):
-    """
-    Securely upload diagnostic images (X-ray, MRI, CT Scan, Ultrasound) or clinical documents (PDF, Reports).
-    Files are stored in private file storage and metadata is linked to the patient's global treatment history.
-    """
-    treatment = db.query(Treatment).filter(Treatment.id == treatment_id).first()
-    if not treatment:
-        raise HTTPException(status_code=404, detail="Treatment record not found.")
-
-    gp = treatment.global_patient
-
-    # Validate file extension
-    ext = os.path.splitext(file.filename)[1].lower()
-    allowed_exts = {".jpg", ".jpeg", ".png", ".pdf", ".webp", ".dcm"}
-    if ext not in allowed_exts:
-        raise HTTPException(status_code=400, detail=f"Unsupported file format '{ext}'. Approved formats: JPG, PNG, PDF, WEBP, DICOM.")
-
-    # Generate unique stored filename
-    stored_filename = f"{treatment.treatment_code}_{uuid.uuid4().hex[:12]}{ext}"
-    dest_path = os.path.join(STORAGE_DIR, stored_filename)
-
-    file_bytes = await file.read()
-    file_size = len(file_bytes)
-
-    if file_size > 20 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File size exceeds maximum allowed limit of 20MB.")
-
-    with open(dest_path, "wb") as f:
-        f.write(file_bytes)
-
-    att_code = generate_attachment_code(db)
-    attachment = TreatmentAttachment(
-        attachment_code=att_code,
-        treatment_id=treatment.id,
-        global_patient_id=gp.id,
-        hospital_id=treatment.hospital_id,
-        original_filename=file.filename or "medical_document",
-        stored_filename=stored_filename,
-        file_type=file.content_type or "application/octet-stream",
-        file_category=file_category,
-        file_size=file_size,
-        file_path=dest_path,
-        uploaded_by_user_id=user.id,
-        description=description,
-        upload_date=datetime.utcnow()
-    )
-    db.add(attachment)
-    db.commit()
-    db.refresh(attachment)
-
-    log_medical_audit(db, user, gp.id, treatment.hospital_id, "CREATE", "treatment_attachments", str(attachment.id),
-                      None, f"Uploaded {file_category}: {file.filename}")
-
-    return AttachmentOut(
-        id=attachment.id,
-        attachment_code=attachment.attachment_code,
-        treatment_id=attachment.treatment_id,
-        patient_grn=gp.grn,
-        hospital_id=attachment.hospital_id,
-        original_filename=attachment.original_filename,
-        file_type=attachment.file_type,
-        file_category=attachment.file_category,
-        file_size=attachment.file_size,
-        description=attachment.description,
-        upload_date=attachment.upload_date,
-        download_url=f"/api/v1/attachments/{attachment.id}"
-    )
-
-@app.get("/api/v1/treatments/{treatment_id}/attachments", response_model=list[AttachmentOut])
-def list_treatment_attachments(treatment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    t = db.query(Treatment).filter(Treatment.id == treatment_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Treatment record not found.")
-
-    gp = t.global_patient
-    return [
-        AttachmentOut(
-            id=a.id,
-            attachment_code=a.attachment_code,
-            treatment_id=a.treatment_id,
-            patient_grn=gp.grn,
-            hospital_id=a.hospital_id,
-            original_filename=a.original_filename,
-            file_type=a.file_type,
-            file_category=a.file_category,
-            file_size=a.file_size,
-            description=a.description,
-            upload_date=a.upload_date,
-            download_url=f"/api/v1/attachments/{a.id}"
-        )
-        for a in t.attachments
-    ]
-
-@app.get("/api/v1/attachments/{attachment_id}")
-def download_attachment(attachment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
-    att = db.query(TreatmentAttachment).filter(TreatmentAttachment.id == attachment_id).first()
-    if not att:
-        raise HTTPException(status_code=404, detail="Attachment file not found.")
-
-    # Authorization verification
-    gp = att.global_patient
-    if user.role == "patient" and (not user.patient_account or user.patient_account.global_patient_id != gp.id):
-        raise HTTPException(status_code=403, detail="Access denied: Cannot view another patient's medical files.")
-
-    if not os.path.exists(att.file_path):
-        raise HTTPException(status_code=404, detail="Physical document file missing from storage.")
-
-    log_medical_access(db, user, gp.id, att.hospital_id, "attachment", str(att.id), "DOWNLOAD", request)
-
-    return FileResponse(
-        path=att.file_path,
-        media_type=att.file_type,
-        filename=att.original_filename
-    )
-
-@app.get("/api/v1/patients/{grn}/attachments", response_model=list[AttachmentOut])
-def get_all_patient_attachments(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user), request: Request = None):
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
-    if not gp:
-        raise HTTPException(status_code=404, detail="Patient not found.")
-
-    log_medical_access(db, user, gp.id, user.hospital_id, "all_attachments", gp.grn, "VIEW", request)
-
-    atts = db.query(TreatmentAttachment).filter(TreatmentAttachment.global_patient_id == gp.id).order_by(TreatmentAttachment.upload_date.desc()).all()
-    return [
-        AttachmentOut(
-            id=a.id,
-            attachment_code=a.attachment_code,
-            treatment_id=a.treatment_id,
-            patient_grn=gp.grn,
-            hospital_id=a.hospital_id,
-            original_filename=a.original_filename,
-            file_type=a.file_type,
-            file_category=a.file_category,
-            file_size=a.file_size,
-            description=a.description,
-            upload_date=a.upload_date,
-            download_url=f"/api/v1/attachments/{a.id}"
-        )
-        for a in atts
-    ]
-
-# ----------------- SECTION 7: Consents & Access Logs -----------------
-@app.post("/api/v1/patients/{grn}/consents", response_model=PatientConsentOut, status_code=201)
-def create_patient_consent(
-    grn: str,
-    payload: PatientConsentCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles("patient", "doctor", "hospital_admin", "super_admin"))
-):
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
-    if not gp:
-        raise HTTPException(status_code=404, detail="Patient not found.")
-
-    hosp = db.query(Hospital).filter(Hospital.code == payload.requesting_hospital_id).first()
-    consent = PatientConsent(
-        global_patient_id=gp.id,
-        requesting_hospital_id=payload.requesting_hospital_id,
-        consent_type=payload.consent_type,
-        status=payload.status,
-        granted_at=datetime.utcnow(),
-        notes=payload.notes
-    )
-    db.add(consent)
-    db.commit()
-    db.refresh(consent)
-
-    log_medical_audit(db, user, gp.id, payload.requesting_hospital_id, "CREATE", "patient_consents", str(consent.id),
-                      None, f"Recorded consent for {payload.requesting_hospital_id} ({payload.consent_type})")
-
-    return PatientConsentOut(
-        id=consent.id,
-        global_patient_id=gp.id,
-        requesting_hospital_id=consent.requesting_hospital_id,
-        requesting_hospital_name=hosp.name if hosp else consent.requesting_hospital_id,
-        consent_type=consent.consent_type,
-        status=consent.status,
-        granted_at=consent.granted_at,
-        expires_at=consent.expires_at,
-        notes=consent.notes
-    )
-
+# ----------------- SECTION 9: Consents & Access Logs -----------------
 @app.get("/api/v1/patients/{grn}/consents", response_model=list[PatientConsentOut])
 def get_patient_consents(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
     if not gp:
-        raise HTTPException(status_code=404, detail="Patient not found.")
-
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
     consents = db.query(PatientConsent).filter(PatientConsent.global_patient_id == gp.id).all()
     results = []
     for c in consents:
         hosp = db.query(Hospital).filter(Hospital.code == c.requesting_hospital_id).first()
         results.append(PatientConsentOut(
             id=c.id,
-            global_patient_id=gp.id,
+            global_patient_id=c.global_patient_id,
             requesting_hospital_id=c.requesting_hospital_id,
             requesting_hospital_name=hosp.name if hosp else c.requesting_hospital_id,
             consent_type=c.consent_type,
@@ -1579,23 +2188,44 @@ def get_patient_consents(grn: str, db: Session = Depends(get_db), user: User = D
         ))
     return results
 
+@app.post("/api/v1/patients/{grn}/consents", response_model=PatientConsentOut, status_code=201)
+def create_patient_consent(
+    grn: str,
+    payload: PatientConsentCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    consent = PatientConsent(
+        global_patient_id=gp.id,
+        requesting_hospital_id=payload.requesting_hospital_id,
+        consent_type=payload.consent_type,
+        status=payload.status,
+        notes=payload.notes,
+        granted_at=datetime.utcnow()
+    )
+    db.add(consent)
+    db.commit()
+    db.refresh(consent)
+    return PatientConsentOut.model_validate(consent)
+
 @app.get("/api/v1/patients/{grn}/access-logs", response_model=list[MedicalAccessLogOut])
 def get_patient_access_logs(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
     if not gp:
-        raise HTTPException(status_code=404, detail="Patient not found.")
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
 
-    logs = db.query(MedicalRecordAccessLog).filter(
-        MedicalRecordAccessLog.global_patient_id == gp.id
-    ).order_by(MedicalRecordAccessLog.accessed_at.desc()).limit(100).all()
-
+    logs = db.query(MedicalRecordAccessLog).filter(MedicalRecordAccessLog.global_patient_id == gp.id).order_by(MedicalRecordAccessLog.accessed_at.desc()).limit(100).all()
     results = []
     for l in logs:
         u = db.query(User).filter(User.id == l.user_id).first() if l.user_id else None
         results.append(MedicalAccessLogOut(
             id=l.id,
             user_id=l.user_id,
-            user_name=u.full_name if u else "Healthcare Personnel",
+            user_name=u.full_name if u else None,
             hospital_id=l.hospital_id,
             resource_type=l.resource_type,
             resource_id=l.resource_id,
@@ -1604,34 +2234,6 @@ def get_patient_access_logs(grn: str, db: Session = Depends(get_db), user: User 
             accessed_at=l.accessed_at
         ))
     return results
-
-# ----------------- SECTION 6: Patient Profile Dashboard -----------------
-@app.get("/api/v1/patient/profile", response_model=PatientProfileOut)
-def get_patient_profile(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    if user.role != "patient":
-        raise HTTPException(status_code=403, detail="Only patient accounts can access personal patient profile.")
-
-    account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
-    if not account or not account.global_patient:
-        raise HTTPException(status_code=404, detail="Global patient profile not found.")
-
-    gp = account.global_patient
-    registered_hospitals = [link.hospital.name for link in gp.hospital_links if link.hospital and link.is_active]
-    primary_hosp = db.query(Hospital).filter(Hospital.id == account.primary_hospital_id).first() if account.primary_hospital_id else None
-
-    return PatientProfileOut(
-        grn=gp.grn,
-        full_name=gp.full_name,
-        date_of_birth=gp.date_of_birth,
-        gender=gp.gender,
-        phone=gp.phone,
-        email=gp.email,
-        blood_group=gp.blood_group,
-        emergency_contact=gp.emergency_contact,
-        primary_hospital_code=primary_hosp.code if primary_hosp else user.hospital_id,
-        primary_hospital_name=primary_hosp.name if primary_hosp else None,
-        registered_hospitals=registered_hospitals
-    )
 
 # ----------------- Summary & Operational Metrics -----------------
 @app.get("/api/v1/dashboard/summary")
@@ -1644,116 +2246,140 @@ def dashboard_summary(db: Session = Depends(get_db), user: User = Depends(curren
             "doctors": db.query(Doctor).count(),
             "staff": db.query(User).filter(User.role.notin_(["super_admin", "patient"])).count(),
             "treatments": db.query(Treatment).count(),
-            "active_treatments": db.query(Treatment).filter(Treatment.status.in_(["In Progress", "Scheduled", "active"])).count(),
-            "attachments": db.query(TreatmentAttachment).count(),
+            "active_treatments": db.query(Treatment).filter(Treatment.status.in_(["In Progress", "Scheduled", "Active", "active"])).count(),
+            "attachments": db.query(MedicalDocument).count(),
             "invoices_total": float(db.query(func.coalesce(func.sum(Invoice.amount), 0)).scalar() or 0),
         }
 
-    hospital = user.hospital_id
-    if not hospital:
-        raise HTTPException(status_code=403, detail="No hospital is assigned.")
-
-    if user.role == "patient":
-        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
-        gp_id = account.global_patient_id if account else -1
-        return {
-            "hospitals": db.query(PatientHospitalLink).filter(PatientHospitalLink.global_patient_id == gp_id).count(),
-            "active_treatments": db.query(Treatment).filter(Treatment.global_patient_id == gp_id, Treatment.status.in_(["In Progress", "active"])).count(),
-            "total_treatments": db.query(Treatment).filter(Treatment.global_patient_id == gp_id).count(),
-            "prescriptions": db.query(Prescription).filter(Prescription.global_patient_id == gp_id).count(),
-            "attachments": db.query(TreatmentAttachment).filter(TreatmentAttachment.global_patient_id == gp_id).count(),
-            "invoices_total": float(db.query(func.coalesce(func.sum(Invoice.amount), 0)).scalar() or 0),
-        }
-
+    hosp = user.hospital_id or "HOSP-001"
     return {
         "hospitals": 1,
-        "patients": db.query(GlobalPatient).count(),
-        "doctors": db.query(Doctor).filter(Doctor.hospital_id == hospital).count(),
-        "staff": db.query(User).filter(User.hospital_id == hospital, User.role.notin_(["patient"])).count(),
-        "appointments": db.query(Appointment).filter(Appointment.hospital_id == hospital).count(),
-        "treatments": db.query(Treatment).filter(Treatment.hospital_id == hospital).count(),
-        "active_treatments": db.query(Treatment).filter(Treatment.hospital_id == hospital, Treatment.status.in_(["In Progress", "active"])).count(),
-        "invoices_total": float(db.query(func.coalesce(func.sum(Invoice.amount), 0)).filter(Invoice.hospital_id == hospital).scalar() or 0),
+        "active_hospitals": 1,
+        "patients": db.query(Patient).filter(Patient.hospital_id == hosp).count(),
+        "doctors": db.query(Doctor).filter(Doctor.hospital_id == hosp).count(),
+        "staff": db.query(User).filter(User.hospital_id == hosp).count(),
+        "treatments": db.query(Treatment).filter(Treatment.hospital_id == hosp).count(),
+        "active_treatments": db.query(Treatment).filter(Treatment.hospital_id == hosp, Treatment.status.in_(["In Progress", "Scheduled", "Active", "active"])).count(),
+        "prescriptions": db.query(Prescription).filter(Prescription.hospital_id == hosp).count(),
+        "lab_reports": db.query(LabReport).filter(LabReport.hospital_id == hosp).count(),
+        "invoices_total": float(db.query(func.coalesce(func.sum(Invoice.amount), 0)).filter(Invoice.hospital_id == hosp).scalar() or 0),
     }
 
-# ----------------- Legacy CRUD Fallbacks -----------------
+# ----------------- Compatibility Resource Endpoints -----------------
 @app.get("/api/v1/patients", response_model=list[PatientOut])
-def get_patients(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    if user.role == "patient":
-        return db.query(Patient).filter(Patient.email == user.email).all()
-    if user.role == "super_admin":
-        return db.query(Patient).all()
-    return db.query(Patient).filter(Patient.hospital_id == user.hospital_id).all()
+def list_patients(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(Patient)
+    if user.role != "super_admin" and user.hospital_id:
+        q = q.filter(Patient.hospital_id == user.hospital_id)
+    return q.all()
 
 @app.post("/api/v1/patients", response_model=PatientOut, status_code=201)
-def create_patient_legacy(payload: PatientCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "hospital_admin", "doctor", "nurse"))):
+def create_patient(payload: PatientCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "hospital_admin", "doctor", "nurse"))):
     hosp = user.hospital_id or "HOSP-001"
     p = Patient(**payload.model_dump(), hospital_id=hosp)
     db.add(p); db.commit(); db.refresh(p)
     return p
 
 @app.get("/api/v1/doctors", response_model=list[DoctorOut])
-def get_doctors(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    if user.role == "super_admin":
-        return db.query(Doctor).all()
-    return db.query(Doctor).filter(Doctor.hospital_id == user.hospital_id).all()
+def list_doctors(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(Doctor)
+    if user.role != "super_admin" and user.hospital_id:
+        q = q.filter(Doctor.hospital_id == user.hospital_id)
+    return q.all()
 
 @app.post("/api/v1/doctors", response_model=DoctorOut, status_code=201)
 def create_doctor(payload: DoctorCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "hospital_admin"))):
     hosp = user.hospital_id or "HOSP-001"
-    d = Doctor(**payload.model_dump(), hospital_id=hosp, is_active=True)
-    db.add(d); db.commit(); db.refresh(d)
-    return d
+    doc = Doctor(**payload.model_dump(), hospital_id=hosp, is_active=True)
+    db.add(doc); db.commit(); db.refresh(doc)
+    return doc
 
 @app.get("/api/v1/appointments", response_model=list[AppointmentOut])
-def get_appointments(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    if user.role == "super_admin":
-        return db.query(Appointment).all()
-    if user.role == "patient":
-        p = db.query(Patient).filter(Patient.email == user.email).first()
-        pid = p.id if p else -1
-        return db.query(Appointment).filter(Appointment.patient_id == pid).all()
-    return db.query(Appointment).filter(Appointment.hospital_id == user.hospital_id).all()
+def list_appointments(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(Appointment)
+    if user.role != "super_admin" and user.hospital_id:
+        q = q.filter(Appointment.hospital_id == user.hospital_id)
+    return q.all()
 
 @app.post("/api/v1/appointments", response_model=AppointmentOut, status_code=201)
 def create_appointment(payload: AppointmentCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
     hosp = user.hospital_id or "HOSP-001"
-    ap = Appointment(**payload.model_dump(), hospital_id=hosp)
-    db.add(ap); db.commit(); db.refresh(ap)
-    return ap
+    appt = Appointment(**payload.model_dump(), hospital_id=hosp)
+    db.add(appt); db.commit(); db.refresh(appt)
+    return appt
 
 @app.get("/api/v1/prescriptions", response_model=list[PrescriptionOut])
-def get_prescriptions(db: Session = Depends(get_db), user: User = Depends(current_user)):
+def list_prescriptions(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(Prescription)
     if user.role == "patient":
         account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
-        gp_id = account.global_patient_id if account else -1
-        return db.query(Prescription).filter(Prescription.global_patient_id == gp_id).all()
-    if user.role == "super_admin":
-        return db.query(Prescription).all()
-    return db.query(Prescription).filter(Prescription.hospital_id == user.hospital_id).all()
+        if not account or not account.global_patient:
+            return []
+        q = q.filter(Prescription.global_patient_id == account.global_patient_id)
+    elif user.role != "super_admin" and user.hospital_id:
+        q = q.filter(Prescription.hospital_id == user.hospital_id)
+    return [PrescriptionOut.model_validate(p) for p in q.all()]
+
+@app.post("/api/v1/prescriptions", response_model=PrescriptionOut, status_code=201)
+def create_prescription(payload: PrescriptionItem, db: Session = Depends(get_db), user: User = Depends(require_roles("doctor", "hospital_admin"))):
+    hosp = user.hospital_id or "HOSP-001"
+    doc = db.query(Doctor).filter(Doctor.hospital_id == hosp).first()
+    p = Prescription(
+        doctor_id=doc.id if doc else 1,
+        hospital_id=hosp,
+        medication=payload.medication,
+        dosage=payload.dosage,
+        instructions=payload.instructions,
+        prescribed_date=date.today(),
+        status="active"
+    )
+    db.add(p); db.commit(); db.refresh(p)
+    return PrescriptionOut.model_validate(p)
 
 @app.get("/api/v1/lab-reports", response_model=list[LabReportOut])
-def get_lab_reports(db: Session = Depends(get_db), user: User = Depends(current_user)):
+def list_lab_reports(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(LabReport)
     if user.role == "patient":
-        p = db.query(Patient).filter(Patient.email == user.email).first()
-        pid = p.id if p else -1
-        return db.query(LabReport).filter(LabReport.patient_id == pid).all()
-    if user.role == "super_admin":
-        return db.query(LabReport).all()
-    return db.query(LabReport).filter(LabReport.hospital_id == user.hospital_id).all()
+        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
+        if account and account.global_patient:
+            q = q.filter(or_(
+                LabReport.global_patient_id == account.global_patient_id,
+                LabReport.patient_id.in_([p.id for p in account.global_patient.accounts])
+            ))
+    elif user.role != "super_admin" and user.hospital_id:
+        q = q.filter(LabReport.hospital_id == user.hospital_id)
+    return [LabReportOut.model_validate(lr) for lr in q.all()]
+
+@app.post("/api/v1/lab-reports", response_model=LabReportOut, status_code=201)
+def create_lab_report(payload: LabReportCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("lab_technician", "doctor", "hospital_admin"))):
+    hosp = user.hospital_id or "HOSP-001"
+    lr = LabReport(
+        patient_id=payload.patient_id or 1,
+        treatment_id=payload.treatment_id,
+        hospital_id=hosp,
+        test_name=payload.test_name,
+        test_category=payload.test_category,
+        result=payload.result,
+        value=payload.value,
+        unit=payload.unit,
+        reference_range=payload.reference_range,
+        report_date=payload.report_date,
+        status=payload.status,
+        is_abnormal=payload.is_abnormal,
+        abnormal_flag=payload.abnormal_flag
+    )
+    db.add(lr); db.commit(); db.refresh(lr)
+    return LabReportOut.model_validate(lr)
 
 @app.get("/api/v1/invoices", response_model=list[InvoiceOut])
-def get_invoices(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    if user.role == "patient":
-        p = db.query(Patient).filter(Patient.email == user.email).first()
-        pid = p.id if p else -1
-        return db.query(Invoice).filter(Invoice.patient_id == pid).all()
-    if user.role == "super_admin":
-        return db.query(Invoice).all()
-    return db.query(Invoice).filter(Invoice.hospital_id == user.hospital_id).all()
+def list_invoices(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(Invoice)
+    if user.role != "super_admin" and user.hospital_id:
+        q = q.filter(Invoice.hospital_id == user.hospital_id)
+    return q.all()
 
 @app.post("/api/v1/invoices", response_model=InvoiceOut, status_code=201)
-def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("billing_staff", "hospital_admin", "super_admin"))):
+def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("billing_staff", "hospital_admin"))):
     hosp = user.hospital_id or "HOSP-001"
     inv = Invoice(**payload.model_dump(), hospital_id=hosp)
     db.add(inv); db.commit(); db.refresh(inv)

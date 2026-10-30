@@ -35,14 +35,24 @@ export interface PatientProfile {
   grn: string;
   full_name: string;
   date_of_birth?: string | null;
+  age?: number | null;
   gender?: string | null;
   phone?: string | null;
   email?: string | null;
+  address?: string | null;
   blood_group?: string | null;
   emergency_contact?: string | null;
+  photo_url?: string | null;
+  marital_status?: string | null;
+  occupation?: string | null;
+  insurance_provider?: string | null;
+  insurance_policy_number?: string | null;
+  insurance_valid_till?: string | null;
+  national_id?: string | null;
   primary_hospital_code?: string | null;
   primary_hospital_name?: string | null;
   registered_hospitals?: string[];
+  registration_date?: string | null;
 }
 
 export interface AuditLog {
@@ -194,6 +204,7 @@ export interface PatientSearchResult {
   linked_hospitals: string[];
   is_linked_to_current_hospital: boolean;
   consent_status: string;
+  photo_url?: string | null;
 }
 
 export interface PatientConsent {
@@ -218,4 +229,92 @@ export interface MedicalAccessLog {
   action: string;
   ip_address?: string | null;
   accessed_at: string;
+}
+
+export interface MedicalDocument {
+  id: number;
+  document_code: string;
+  treatment_id?: number | null;
+  patient_grn: string;
+  hospital_id: string;
+  document_name: string;
+  original_filename: string;
+  file_type: string;
+  file_category: string;
+  file_size: number;
+  description: string;
+  upload_date: string;
+  download_url: string;
+}
+
+export interface PatientVital {
+  id: number;
+  patient_grn: string;
+  hospital_id: string;
+  blood_pressure_systolic: number;
+  blood_pressure_diastolic: number;
+  pulse: number;
+  temperature: number;
+  oxygen_saturation: number;
+  respiratory_rate?: number | null;
+  weight_kg?: number | null;
+  height_cm?: number | null;
+  bmi?: number | null;
+  is_abnormal: boolean;
+  abnormal_notes?: string | null;
+  recorded_at: string;
+  recorded_by_name?: string | null;
+}
+
+export interface FamilyContact {
+  id: number;
+  patient_grn: string;
+  full_name: string;
+  relationship: string;
+  phone: string;
+  email?: string | null;
+  address?: string | null;
+  is_emergency_contact: boolean;
+  is_primary: boolean;
+  created_at: string;
+}
+
+export interface LabReport {
+  id: number;
+  patient_id?: number | null;
+  treatment_id?: number | null;
+  hospital_id: string;
+  test_name: string;
+  test_category: string;
+  result: string;
+  value?: number | null;
+  unit?: string | null;
+  reference_range?: string | null;
+  report_date: string;
+  status: string;
+  is_abnormal: boolean;
+  abnormal_flag?: string | null;
+}
+
+export interface HealthAnalysis {
+  grn: string;
+  current_vitals?: PatientVital | null;
+  historical_vitals: PatientVital[];
+  lab_reports: LabReport[];
+  abnormal_findings: string[];
+  allergies: PatientAllergy[];
+  conditions: MedicalCondition[];
+  active_medications: PrescriptionItem[];
+  surgeries: MedicalHistoryItem[];
+}
+
+export interface TreatmentHistory {
+  id: number;
+  treatment_id: number;
+  action: string;
+  status_before?: string | null;
+  status_after: string;
+  change_summary?: string | null;
+  timestamp: string;
+  changed_by_name?: string | null;
 }

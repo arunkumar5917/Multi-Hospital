@@ -187,8 +187,94 @@ def run_all_tests():
     assert len(access_logs_res.json()) >= 1, "Expected access logs from recent reads"
     print(f"✓ Test 12: Consents and HIPAA-compliant access audit logs retrieved successfully")
 
+    # 13. Patient Self Profile (GET & PATCH /api/v1/patients/me)
+    patient_headers = {"Authorization": f"Bearer {pat_token}"}
+    me_res = client.get("/api/v1/patients/me", headers=patient_headers)
+    assert me_res.status_code == 200, f"Get /patients/me failed: {me_res.text}"
+    me_data = me_res.json()
+    assert me_data["grn"] == "XM-GRN-000001"
+    assert "insurance_provider" in me_data
+
+    patch_res = client.patch("/api/v1/patients/me", headers=patient_headers, json={
+        "address": "42 Anna Salai, Chennai",
+        "emergency_contact": "+91 98401 99999",
+        "insurance_provider": "Star Health Insurance",
+        "insurance_policy_number": "SHI-789012"
+    })
+    assert patch_res.status_code == 200, f"Patch /patients/me failed: {patch_res.text}"
+    updated_profile = patch_res.json()
+    assert updated_profile["address"] == "42 Anna Salai, Chennai"
+    assert updated_profile["insurance_provider"] == "Star Health Insurance"
+    print(f"✓ Test 13: Patient self-profile GET and PATCH verified (Age: {updated_profile.get('age')})")
+
+    # 14. Patient Photo Upload & Retrieval
+    dummy_photo = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    photo_files = {"file": ("avatar.png", io.BytesIO(dummy_photo), "image/png")}
+    photo_upload_res = client.post("/api/v1/patients/XM-GRN-000001/photo", headers=patient_headers, files=photo_files)
+    assert photo_upload_res.status_code == 200, f"Photo upload failed: {photo_upload_res.text}"
+    photo_data = photo_upload_res.json()
+    assert "photo_url" in photo_data
+    photo_get_res = client.get("/api/v1/patients/XM-GRN-000001/photo")
+    assert photo_get_res.status_code == 200, f"Photo get failed: {photo_get_res.status_code}"
+    print(f"✓ Test 14: Patient profile photo upload and streaming retrieval verified")
+
+    # 15. Health Analysis & Vitals Logging
+    analysis_res = client.get("/api/v1/patients/XM-GRN-000001/health-analysis", headers=doc_headers)
+    assert analysis_res.status_code == 200, f"Health analysis failed: {analysis_res.text}"
+    analysis = analysis_res.json()
+    assert "current_vitals" in analysis
+    assert len(analysis["historical_vitals"]) >= 1
+    assert len(analysis["lab_reports"]) >= 1
+    print(f"✓ Test 15: Health Analysis retrieved with {len(analysis['historical_vitals'])} vital recordings and {len(analysis['lab_reports'])} lab reports")
+
+    # 16. Log New Vitals
+    new_vital_res = client.post("/api/v1/patients/XM-GRN-000001/vitals", headers=doc_headers, json={
+        "blood_pressure_systolic": 122,
+        "blood_pressure_diastolic": 80,
+        "pulse": 72,
+        "temperature": 98.6,
+        "oxygen_saturation": 99,
+        "respiratory_rate": 16,
+        "weight_kg": 73.0,
+        "height_cm": 176.0,
+        "notes": "Routine morning clinical check"
+    })
+    assert new_vital_res.status_code == 201, f"Log vitals failed: {new_vital_res.text}"
+    vital_data = new_vital_res.json()
+    assert vital_data["blood_pressure_systolic"] == 122
+    assert vital_data["bmi"] is not None
+    print(f"✓ Test 16: New vital signs recorded with calculated BMI ({vital_data['bmi']})")
+
+    # 17. Family Contacts Management
+    fam_create_res = client.post("/api/v1/patients/XM-GRN-000001/family-contacts", headers=patient_headers, json={
+        "full_name": "Kavitha Kumar",
+        "relationship": "Mother",
+        "phone": "+91 98401 77777",
+        "email": "kavitha.k@example.com",
+        "address": "42 Anna Nagar, Chennai",
+        "is_emergency_contact": True,
+        "is_primary": False
+    })
+    assert fam_create_res.status_code == 201, f"Create family contact failed: {fam_create_res.text}"
+    new_fam_id = fam_create_res.json()["id"]
+
+    fam_list_res = client.get("/api/v1/patients/XM-GRN-000001/family-contacts", headers=patient_headers)
+    assert fam_list_res.status_code == 200
+    assert any(c["id"] == new_fam_id for c in fam_list_res.json())
+
+    fam_del_res = client.delete(f"/api/v1/family-contacts/{new_fam_id}", headers=patient_headers)
+    assert fam_del_res.status_code == 200
+    print(f"✓ Test 17: Family contact creation, listing, and deletion verified")
+
+    # 18. QR Patient Card Generation (Pure SVG)
+    qr_res = client.get("/api/v1/patients/XM-GRN-000001/qr-code")
+    assert qr_res.status_code == 200
+    assert qr_res.headers.get("content-type") == "image/svg+xml"
+    assert b"<svg" in qr_res.content
+    print(f"✓ Test 18: Vector SVG QR code generated successfully for GRN XM-GRN-000001")
+
     print("=====================================================================")
-    print("  ALL 12 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
+    print("  ALL 18 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
     print("=====================================================================")
 
 if __name__ == "__main__":

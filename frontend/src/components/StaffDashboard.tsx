@@ -1150,10 +1150,19 @@ export function StaffDashboard() {
             <div className="modal-body">
               {/* Demographics & Alerts Banner */}
               <div className="patient-modal-bio-bar">
+                {selectedPatientForView.photo_url && (
+                  <img
+                    src={selectedPatientForView.photo_url}
+                    alt={selectedPatientForView.full_name}
+                    className="avatar-chip"
+                    style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover" }}
+                  />
+                )}
                 <div><span>GRN:</span> <strong>{selectedPatientForView.grn}</strong></div>
-                <div><span>Blood Group:</span> <strong>{selectedPatientForView.blood_group || "—"}</strong></div>
+                <div><span>Blood Group:</span> <strong className="text-pink">{selectedPatientForView.blood_group || "O+"}</strong></div>
                 <div><span>Phone:</span> <strong>{selectedPatientForView.phone || "—"}</strong></div>
                 <div><span>Primary Facility:</span> <strong>{selectedPatientForView.primary_hospital_name || selectedPatientForView.primary_hospital_code}</strong></div>
+                <div><span>QR Passport:</span> <a href={`/api/v1/patients/${selectedPatientForView.grn}/qr-code`} target="_blank" rel="noreferrer" className="btn-details-link">Scan / View QR</a></div>
               </div>
 
               {/* Conditions & Allergies */}
