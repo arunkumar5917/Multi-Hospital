@@ -719,186 +719,34 @@ a:hover {
 }
 
 .login-brand-panel {
-  flex: 1 1 450px;
-  max-width: 480px;
+  flex: 1 1 480px;
+  max-width: 500px;
+  min-height: 480px;
   background: #ffffff;
   border: 1px solid var(--slate-200);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl);
-  padding: 38px 36px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Gradient accent bar for XORA branding */
-.login-brand-panel::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #EA0170 0%, #001C68 100%);
-}
-
-.brand-logo-card {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: var(--radius-lg);
-  padding: 22px 24px;
+  padding: 40px 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 3px 12px rgba(0, 28, 104, 0.04);
-  margin-bottom: 22px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.brand-logo-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(234, 1, 112, 0.08);
+.brand-logo-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
 }
 
 .brand-xora-hero-logo {
   width: 100%;
-  max-width: 310px;
+  max-width: 360px;
   height: auto;
-  max-height: 96px;
+  max-height: 140px;
   object-fit: contain;
   display: block;
-}
-
-.brand-panel-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.brand-badge-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: rgba(234, 1, 112, 0.08);
-  color: #EA0170;
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  border-radius: 9999px;
-  align-self: flex-start;
-  margin-bottom: 12px;
-  border: 1px solid rgba(234, 1, 112, 0.2);
-}
-
-.brand-panel-title {
-  font-size: 19px;
-  font-weight: 800;
-  color: #001C68;
-  line-height: 1.35;
-  margin: 0 0 10px;
-}
-
-.brand-panel-desc {
-  font-size: 13px;
-  color: var(--slate-600);
-  line-height: 1.55;
-  margin: 0 0 20px;
-}
-
-.brand-feature-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-
-.brand-feature-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  background: #f8fafc;
-  padding: 11px 13px;
-  border-radius: var(--radius-md);
-  border: 1px solid #e2e8f0;
-  transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.brand-feature-row:hover {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-}
-
-.brand-feat-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.brand-feat-icon.pink {
-  background: #fdf2f8;
-  color: #EA0170;
-}
-
-.brand-feat-icon.navy {
-  background: #eff6ff;
-  color: #001C68;
-}
-
-.brand-feat-icon.teal {
-  background: #f0fdfa;
-  color: #0d9488;
-}
-
-.brand-feat-text {
-  flex: 1;
-}
-
-.brand-feat-text strong {
-  display: block;
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--navy-900);
-  margin-bottom: 2px;
-}
-
-.brand-feat-text p {
-  font-size: 11.5px;
-  color: var(--slate-600);
-  margin: 0;
-  line-height: 1.4;
-}
-
-.brand-panel-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid var(--slate-200);
-  padding-top: 14px;
-  margin-top: auto;
-  font-size: 11.5px;
-  color: var(--slate-500);
-}
-
-.brand-foot-system {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.system-pill {
-  font-weight: 700;
-  color: var(--navy-900);
-}
-
-.brand-foot-corp strong {
-  color: #001C68;
 }
 
 @media (max-width: 980px) {
@@ -913,6 +761,10 @@ a:hover {
     max-width: 500px;
     width: 100%;
   }
+
+  .login-brand-panel {
+    min-height: 220px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -926,10 +778,7 @@ a:hover {
 
   .login-brand-panel {
     padding: 24px 20px;
-  }
-
-  .brand-panel-title {
-    font-size: 17px;
+    min-height: 180px;
   }
 }
 
