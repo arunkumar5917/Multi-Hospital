@@ -4,6 +4,7 @@ import { Hospital, LoginResponse } from "../types";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PasswordInput } from "./PasswordInput";
 import { ForgotPassword } from "./ForgotPassword";
+import { BrandShowcasePanel } from "./BrandShowcasePanel";
 import {
   Building2,
   ShieldCheck,
@@ -134,15 +135,19 @@ export function LoginForm({ portal, defaultTab = "staff" }: LoginFormProps) {
 
   if (showForgotPassword) {
     return (
-      <ForgotPassword
-        initialIdentifier={identifier}
-        onBackToLogin={() => setShowForgotPassword(false)}
-      />
+      <div className="auth-split-wrapper">
+        <ForgotPassword
+          initialIdentifier={identifier}
+          onBackToLogin={() => setShowForgotPassword(false)}
+        />
+        <BrandShowcasePanel />
+      </div>
     );
   }
 
   return (
-    <div className={`login-box-card ${portalMeta.tone}`}>
+    <div className="auth-split-wrapper">
+      <div className={`login-box-card ${portalMeta.tone}`}>
       {/* Top Banner for Hospital-bound logins */}
       {portalMeta.requiresHospital && (
         <div className="login-facility-banner">
@@ -310,6 +315,8 @@ export function LoginForm({ portal, defaultTab = "staff" }: LoginFormProps) {
         </div>
       </div>
     </div>
+    <BrandShowcasePanel />
+  </div>
   );
 }
 

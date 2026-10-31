@@ -78,21 +78,41 @@ function PublicHome() {
   );
 }
 
+function AuthHeader({ subtitle = "HOSPITAL MANAGEMENT SYSTEM" }: { subtitle?: string }) {
+  return (
+    <header className="auth-page-header">
+      <Link to="/" className="logo brand-logo">
+        <div className="logo-symbol">
+          <span>X7</span>
+        </div>
+        <div>
+          <b>MEDICORE</b>
+          <small>{subtitle}</small>
+        </div>
+      </Link>
+      <div className="auth-header-right">
+        <span className="auth-header-partner-label">Powered by</span>
+        <img
+          src="/xora_logo.svg"
+          alt="XORA Technologies"
+          className="auth-header-xora-logo"
+          onError={(e) => {
+            const img = e.currentTarget;
+            if (img.src.indexOf(".svg") !== -1) {
+              img.src = "/xora_logo.png";
+            }
+          }}
+        />
+      </div>
+    </header>
+  );
+}
+
 // Hospital Admin Login Page
 function HospitalAdminLoginPage() {
   return (
     <div className="auth-page-wrapper">
-      <header className="auth-page-header">
-        <Link to="/" className="logo brand-logo">
-          <div className="logo-symbol">
-            <span>X7</span>
-          </div>
-          <div>
-            <b>MEDICORE</b>
-            <small>HOSPITAL MANAGEMENT SYSTEM</small>
-          </div>
-        </Link>
-      </header>
+      <AuthHeader />
       <main className="auth-form-center">
         <LoginForm portal="hospital_admin" />
       </main>
@@ -107,17 +127,7 @@ function GeneralLoginPage() {
 
   return (
     <div className="auth-page-wrapper">
-      <header className="auth-page-header">
-        <Link to="/" className="logo brand-logo">
-          <div className="logo-symbol">
-            <span>X7</span>
-          </div>
-          <div>
-            <b>MEDICORE</b>
-            <small>HOSPITAL MANAGEMENT SYSTEM</small>
-          </div>
-        </Link>
-      </header>
+      <AuthHeader />
       <main className="auth-form-center">
         <LoginForm portal="general" defaultTab={defaultTab} />
       </main>
@@ -129,17 +139,7 @@ function GeneralLoginPage() {
 function SuperAdminLoginPage() {
   return (
     <div className="auth-page-wrapper super-admin-theme">
-      <header className="auth-page-header">
-        <Link to="/" className="logo brand-logo">
-          <div className="logo-symbol">
-            <span>X7</span>
-          </div>
-          <div>
-            <b>MEDICORE</b>
-            <small>SUPER ADMIN CONSOLE</small>
-          </div>
-        </Link>
-      </header>
+      <AuthHeader subtitle="SUPER ADMIN CONSOLE" />
       <main className="auth-form-center">
         <LoginForm portal="super_admin" />
       </main>
