@@ -15,6 +15,7 @@ import jwt
 from jwt import InvalidTokenError
 import qrcode
 import qrcode.image.svg
+from PIL import Image, ImageOps
 
 from .database import Base, engine, get_db, SessionLocal
 from .models import (
@@ -1309,6 +1310,8 @@ def link_patient_to_hospital(
         "grn": gp.grn
     }
 
+MAX_PHOTO_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB limit
+
 @app.post("/api/v1/patients/{grn}/photo")
 async def upload_patient_photo(
     grn: str,
@@ -1321,32 +1324,118 @@ async def upload_patient_photo(
     if not gp:
         raise HTTPException(status_code=404, detail="Patient GRN not found.")
 
-    ext = os.path.splitext(file.filename)[1].lower()
+    ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in [".jpg", ".jpeg", ".png", ".webp"]:
-        raise HTTPException(status_code=400, detail="Invalid photo format. Use JPG, PNG, or WEBP.")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid photo format. Supported formats are JPG, JPEG, PNG, and WebP."
+        )
 
-    photo_filename = f"{gp.grn}_avatar{ext}"
-    photo_path = os.path.join(PHOTOS_DIR, photo_filename)
     contents = await file.read()
-    with open(photo_path, "wb") as f:
-        f.write(contents)
+    if len(contents) > MAX_PHOTO_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="File size exceeds maximum upload limit of 2 MB. Please select or compress an image under 2 MB."
+        )
+
+    # Process and crop/resize to exactly 500x500 px using Pillow
+    try:
+        img = Image.open(io.BytesIO(contents))
+        img = ImageOps.exif_transpose(img)
+
+        # Handle color channels
+        if ext in [".jpg", ".jpeg"]:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+        else:
+            if img.mode not in ["RGB", "RGBA"]:
+                img = img.convert("RGBA")
+
+        # Center-crop to 1:1 square
+        w, h = img.size
+        min_dim = min(w, h)
+        left = (w - min_dim) // 2
+        top = (h - min_dim) // 2
+        right = left + min_dim
+        bottom = top + min_dim
+        img_cropped = img.crop((left, top, right, bottom))
+
+        # High-quality Lanczos resize to 500x500 px
+        img_resized = img_cropped.resize((500, 500), Image.Resampling.LANCZOS)
+
+        # Clear any prior avatar files for this patient
+        for old_ext in [".jpg", ".jpeg", ".png", ".webp"]:
+            old_path = os.path.join(PHOTOS_DIR, f"{gp.grn}_avatar{old_ext}")
+            if os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    pass
+
+        photo_filename = f"{gp.grn}_avatar{ext}"
+        photo_path = os.path.join(PHOTOS_DIR, photo_filename)
+
+        save_format = "PNG" if ext == ".png" else ("WEBP" if ext == ".webp" else "JPEG")
+        save_params = {"quality": 88, "optimize": True} if save_format in ["JPEG", "WEBP"] else {"optimize": True}
+        img_resized.save(photo_path, format=save_format, **save_params)
+
+    except Exception:
+        # Fallback raw write if Pillow processing encounters an issue
+        photo_filename = f"{gp.grn}_avatar{ext}"
+        photo_path = os.path.join(PHOTOS_DIR, photo_filename)
+        with open(photo_path, "wb") as f:
+            f.write(contents)
+
+    timestamp = int(datetime.utcnow().timestamp())
+    photo_url = f"/api/v1/patients/{gp.grn}/photo?t={timestamp}"
 
     prof = gp.profile
     if not prof:
         prof = PatientProfile(
             global_patient_id=gp.id,
-            photo_url=f"/api/v1/patients/{gp.grn}/photo",
+            photo_url=photo_url,
             age=calculate_age(gp.date_of_birth)
         )
         db.add(prof)
     else:
-        prof.photo_url = f"/api/v1/patients/{gp.grn}/photo"
+        prof.photo_url = photo_url
         prof.updated_at = datetime.utcnow()
 
     db.commit()
     log_medical_audit(db, user, gp.id, user.hospital_id, "UPDATE", "patient_profiles", str(gp.id),
-                      None, f"Updated profile photo for {gp.grn}")
-    return {"photo_url": f"/api/v1/patients/{gp.grn}/photo", "message": "Profile photo updated successfully."}
+                      None, f"Updated profile photo (500x500 px) for {gp.grn}")
+    return {
+        "photo_url": photo_url,
+        "message": "Profile photo processed, resized to 500x500 px, and saved successfully."
+    }
+
+@app.delete("/api/v1/patients/{grn}/photo")
+def delete_patient_photo(
+    grn: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient GRN not found.")
+
+    # Remove stored physical photo files on disk
+    for old_ext in [".png", ".jpg", ".jpeg", ".webp"]:
+        candidate = os.path.join(PHOTOS_DIR, f"{gp.grn}_avatar{old_ext}")
+        if os.path.exists(candidate):
+            try:
+                os.remove(candidate)
+            except OSError:
+                pass
+
+    if gp.profile:
+        gp.profile.photo_url = None
+        gp.profile.updated_at = datetime.utcnow()
+        db.commit()
+
+    log_medical_audit(db, user, gp.id, user.hospital_id, "DELETE", "patient_profiles", str(gp.id),
+                      None, f"Removed profile photo for {gp.grn}")
+    return {"message": "Profile photo removed successfully.", "photo_url": None}
 
 @app.get("/api/v1/patients/{grn}/photo")
 def get_patient_photo(grn: str, db: Session = Depends(get_db)):
@@ -1357,23 +1446,27 @@ def get_patient_photo(grn: str, db: Session = Depends(get_db)):
     for ext in [".png", ".jpg", ".jpeg", ".webp"]:
         candidate = os.path.join(PHOTOS_DIR, f"{gp.grn}_avatar{ext}")
         if os.path.exists(candidate):
-            media_type = "image/png" if ext == ".png" else "image/jpeg"
-            return FileResponse(candidate, media_type=media_type)
+            media_type = "image/png" if ext == ".png" else ("image/webp" if ext == ".webp" else "image/jpeg")
+            return FileResponse(candidate, media_type=media_type, headers={"Cache-Control": "public, max-age=60"})
 
-    # Return default SVG avatar
-    svg_avatar = f'''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+    # Return default circular SVG avatar with medical silhouette and initial
+    initial = (gp.full_name[0] if gp.full_name else 'P').upper()
+    svg_avatar = f'''<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
       <defs>
         <linearGradient id="avatarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#2563eb" />
-          <stop offset="100%" stop-color="#ec4899" />
+          <stop offset="0%" stop-color="#1e3a8a" />
+          <stop offset="50%" stop-color="#2563eb" />
+          <stop offset="100%" stop-color="#0284c7" />
         </linearGradient>
       </defs>
-      <rect width="200" height="200" fill="url(#avatarGrad)" rx="100" />
-      <text x="50%" y="54%" font-family="Arial, sans-serif" font-size="76" font-weight="bold" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">
-        {gp.full_name[0] if gp.full_name else 'P'}
+      <circle cx="250" cy="250" r="250" fill="url(#avatarGrad)" />
+      <circle cx="250" cy="180" r="80" fill="#ffffff" fill-opacity="0.22" />
+      <path d="M110 420 C110 330 180 300 250 300 C320 300 390 330 390 420 Z" fill="#ffffff" fill-opacity="0.22" />
+      <text x="250" y="270" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="140" font-weight="800" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">
+        {initial}
       </text>
     </svg>'''
-    return Response(content=svg_avatar, media_type="image/svg+xml")
+    return Response(content=svg_avatar, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
 # ----------------- SECTION 3: Treatments & Encounters -----------------
 @app.get("/api/v1/patients/{grn}/treatments", response_model=list[TreatmentOut])

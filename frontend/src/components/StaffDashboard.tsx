@@ -15,6 +15,7 @@ import {
   HealthAnalysis,
 } from "../types";
 import { useAuth } from "../context/AuthContext";
+import { PatientProfilePhoto } from "./PatientProfilePhoto";
 import {
   Activity,
   ArrowRight,
@@ -1453,34 +1454,15 @@ export function StaffDashboard() {
                   <div className="patient-biodata-header-card" style={{ marginBottom: "16px" }}>
                     <div className="patient-biodata-layout">
                       <div className="patient-photo-column">
-                        <div className="patient-avatar-frame">
-                          {selectedPatientProfile?.photo_url || selectedPatientForView.photo_url ? (
-                            <img
-                              src={selectedPatientProfile?.photo_url || selectedPatientForView.photo_url || ""}
-                              alt={selectedPatientForView.full_name}
-                              className="patient-photo-img"
-                            />
-                          ) : (
-                            <div className="patient-photo-fallback"><HeartPulse size={48} /></div>
-                          )}
-                          <button
-                            type="button"
-                            className="photo-edit-overlay-btn"
-                            onClick={() => staffPhotoInputRef.current?.click()}
-                            title="Upload / Update Photo"
-                            disabled={staffPhotoUploading}
-                          >
-                            <Camera size={14} />
-                            <span>{staffPhotoUploading ? "Uploading…" : "Change"}</span>
-                          </button>
-                          <input
-                            type="file"
-                            ref={staffPhotoInputRef}
-                            style={{ display: "none" }}
-                            accept="image/png, image/jpeg, image/jpg, image/webp"
-                            onChange={handleStaffPhotoUpload}
-                          />
-                        </div>
+                        <PatientProfilePhoto
+                          grn={selectedPatientForView.grn}
+                          fullName={selectedPatientProfile?.full_name || selectedPatientForView.full_name}
+                          photoUrl={selectedPatientProfile?.photo_url || selectedPatientForView.photo_url}
+                          onPhotoUpdated={(newUrl) => {
+                            setSelectedPatientProfile((prev) => (prev ? { ...prev, photo_url: newUrl } : null));
+                            setSelectedPatientForView((prev) => (prev ? { ...prev, photo_url: newUrl } : null));
+                          }}
+                        />
                         <span className="blood-group-badge-pink">
                           <Droplets size={12} /> Blood: {selectedPatientProfile?.blood_group || selectedPatientForView.blood_group || "O+"}
                         </span>

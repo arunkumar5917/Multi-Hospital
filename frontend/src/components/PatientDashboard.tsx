@@ -16,6 +16,7 @@ import {
   HealthAnalysis,
 } from "../types";
 import { useAuth } from "../context/AuthContext";
+import { PatientProfilePhoto } from "./PatientProfilePhoto";
 import {
   HeartPulse,
   IdCard,
@@ -682,36 +683,14 @@ export function PatientDashboard() {
           <div className="patient-biodata-layout">
             {/* Photo Avatar with upload trigger */}
             <div className="patient-photo-column">
-              <div className="patient-avatar-frame">
-                {profile?.photo_url ? (
-                  <img
-                    src={profile.photo_url}
-                    alt={profile.full_name}
-                    className="patient-photo-img"
-                  />
-                ) : (
-                  <div className="patient-photo-fallback">
-                    <HeartPulse size={48} />
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="photo-edit-overlay-btn"
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Upload / Update Photo"
-                  disabled={photoUploading}
-                >
-                  <Camera size={16} />
-                  <span>{photoUploading ? "Uploading…" : "Change"}</span>
-                </button>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  style={{ display: "none" }}
-                  accept="image/png, image/jpeg, image/jpg, image/webp"
-                  onChange={handlePhotoUpload}
-                />
-              </div>
+              <PatientProfilePhoto
+                grn={grn}
+                fullName={profile?.full_name || "Patient"}
+                photoUrl={profile?.photo_url}
+                onPhotoUpdated={(newUrl) => {
+                  setProfile((prev) => (prev ? { ...prev, photo_url: newUrl } : null));
+                }}
+              />
               <span className="blood-group-badge-pink">
                 <Droplets size={12} /> Blood: {profile?.blood_group || "O+"}
               </span>

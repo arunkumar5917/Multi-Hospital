@@ -207,7 +207,14 @@ def run_all_tests():
     assert updated_profile["insurance_provider"] == "Star Health Insurance"
     print(f"✓ Test 13: Patient self-profile GET and PATCH verified (Age: {updated_profile.get('age')})")
 
-    # 14. Patient Photo Upload & Retrieval
+    # 14. Patient Photo Upload, 2MB Validation, Retrieval & Deletion
+    # Test rejection of files > 2 MB
+    oversized_data = b"0" * (2 * 1024 * 1024 + 1024)
+    oversized_file = {"file": ("huge.jpg", io.BytesIO(oversized_data), "image/jpeg")}
+    rej_res = client.post("/api/v1/patients/XM-GRN-000001/photo", headers=patient_headers, files=oversized_file)
+    assert rej_res.status_code == 413, f"Expected 413 for >2MB file, got {rej_res.status_code}"
+
+    # Valid photo upload
     dummy_photo = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
     photo_files = {"file": ("avatar.png", io.BytesIO(dummy_photo), "image/png")}
     photo_upload_res = client.post("/api/v1/patients/XM-GRN-000001/photo", headers=patient_headers, files=photo_files)
@@ -216,7 +223,14 @@ def run_all_tests():
     assert "photo_url" in photo_data
     photo_get_res = client.get("/api/v1/patients/XM-GRN-000001/photo")
     assert photo_get_res.status_code == 200, f"Photo get failed: {photo_get_res.status_code}"
-    print(f"✓ Test 14: Patient profile photo upload and streaming retrieval verified")
+
+    # Delete photo option
+    del_photo_res = client.delete("/api/v1/patients/XM-GRN-000001/photo", headers=patient_headers)
+    assert del_photo_res.status_code == 200, f"Photo delete failed: {del_photo_res.text}"
+    photo_get_default_res = client.get("/api/v1/patients/XM-GRN-000001/photo")
+    assert photo_get_default_res.status_code == 200
+    assert b"<svg" in photo_get_default_res.content  # Returns default SVG avatar
+    print(f"✓ Test 14: Patient profile photo upload, 2MB size enforcement, removal, and default avatar verified")
 
     # 15. Health Analysis & Vitals Logging
     analysis_res = client.get("/api/v1/patients/XM-GRN-000001/health-analysis", headers=doc_headers)
