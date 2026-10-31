@@ -590,3 +590,4 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
     </div>
   );
 };
+

@@ -1347,7 +1347,7 @@ export function PatientDashboard() {
             TAB 2: PRESENT TREATMENT (Dedicated View)
            ------------------------------------------------------------- */}
         {activeTab === "current-treatment" && (
-          <section className="panel-box">
+          <section className="panel-box present-treatment-panel">
             <div className="panel-header">
               <div>
                 <span className="badge-pink-soft">ACTIVE CLINICAL ENCOUNTER</span>
@@ -1475,7 +1475,7 @@ export function PatientDashboard() {
             TAB 3: PAST TREATMENTS
            ------------------------------------------------------------- */}
         {activeTab === "past-treatments" && (
-          <section className="panel-box">
+          <section className="panel-box past-treatments-panel">
             <div className="panel-header">
               <div>
                 <h2>Chronological Treatment History</h2>
@@ -1557,7 +1557,7 @@ export function PatientDashboard() {
            ------------------------------------------------------------- */}
         {activeTab === "health-analysis" && (
           <div className="health-analysis-full-tab">
-            <section className="panel-box">
+            <section className="panel-box health-analysis-panel">
               <div className="panel-header">
                 <div>
                   <h2>Comprehensive Health Analysis & Vitals Logging</h2>
@@ -1620,7 +1620,7 @@ export function PatientDashboard() {
             TAB 5: MEDICAL DOCUMENTS REPOSITORY
            ------------------------------------------------------------- */}
         {activeTab === "documents" && (
-          <section className="panel-box">
+          <section className="panel-box medical-documents-panel">
             <div className="panel-header">
               <div>
                 <h2>Central Medical Document Repository</h2>
@@ -1741,7 +1741,7 @@ export function PatientDashboard() {
             TAB 6: FAMILY & EMERGENCY CONTACTS
            ------------------------------------------------------------- */}
         {activeTab === "family" && (
-          <section className="panel-box">
+          <section className="panel-box family-contacts-panel">
             <div className="panel-header">
               <div>
                 <h2>Family Contacts & Emergency Notification Links</h2>

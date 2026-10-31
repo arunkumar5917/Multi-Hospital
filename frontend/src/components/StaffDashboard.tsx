@@ -1451,7 +1451,7 @@ export function StaffDashboard() {
               {/* TAB 1: Personal Information & Biodata */}
               {patientModalActiveTab === "personal" && (
                 <div className="tab-pane-content">
-                  <div className="patient-biodata-header-card" style={{ marginBottom: "16px" }}>
+                  <div className="patient-biodata-header-card" style={{ margin: "10px 0 28px 0" }}>
                     <div className="patient-biodata-layout">
                       <div className="patient-photo-column">
                         <PatientProfilePhoto
@@ -1590,7 +1590,7 @@ export function StaffDashboard() {
                 <div className="tab-pane-content">
                   {patientHistoryModal.treatments.filter((t) => t.status === "Active" || t.status === "In Progress" || t.status === "Scheduled").length > 0 ? (
                     patientHistoryModal.treatments.filter((t) => t.status === "Active" || t.status === "In Progress" || t.status === "Scheduled").map((t) => (
-                      <div className="panel-box present-treatment-card" key={t.id} style={{ marginBottom: "16px" }}>
+                      <div className="panel-box present-treatment-card" key={t.id} style={{ margin: "12px 0 28px 0" }}>
                         <div className="panel-header">
                           <div>
                             <span className="badge-pink-soft">ACTIVE CLINICAL ENCOUNTER</span>
@@ -1722,7 +1722,7 @@ export function StaffDashboard() {
               {/* TAB 4: Medical Documents Management */}
               {patientModalActiveTab === "documents" && (
                 <div className="tab-pane-content">
-                  <div className="sub-table-header" style={{ marginBottom: "12px" }}>
+                  <div className="sub-table-header" style={{ margin: "10px 0 22px 0" }}>
                     <h4><Layers size={16} /> Diagnostic Scans & Attached Medical Documents</h4>
                     <button
                       className="btn-sm-primary"
@@ -1739,7 +1739,7 @@ export function StaffDashboard() {
                   {selectedPatientDocs.length === 0 && patientHistoryModal.attachments.length === 0 ? (
                     <p className="empty-message-sm">No diagnostic scans or documents attached.</p>
                   ) : (
-                    <div className="modal-attachments-grid">
+                    <div className="modal-attachments-grid" style={{ margin: "16px 0 26px 0" }}>
                       {(selectedPatientDocs.length > 0 ? selectedPatientDocs : patientHistoryModal.attachments).map((att) => (
                         <div className="attachment-chip" key={att.id}>
                           <div>
@@ -1765,7 +1765,7 @@ export function StaffDashboard() {
               {/* TAB 5: Health Analysis & Vitals */}
               {patientModalActiveTab === "health-analysis" && (
                 <div className="tab-pane-content">
-                  <div className="sub-table-header" style={{ marginBottom: "12px" }}>
+                  <div className="sub-table-header" style={{ margin: "10px 0 22px 0" }}>
                     <h4><Activity size={16} /> Clinical Vitals Monitoring & Abnormal Highlights</h4>
                     <button
                       className="btn-sm-primary"
@@ -1776,7 +1776,7 @@ export function StaffDashboard() {
                   </div>
 
                   {/* 4 Vitals Metric Cards */}
-                  <div className="vital-signs-metrics-grid" style={{ margin: "8px 0 16px" }}>
+                  <div className="vital-signs-metrics-grid" style={{ margin: "18px 0 28px 0" }}>
                     <div className="vital-metric-card">
                       <div className="vital-card-header">
                         <span>Blood Pressure</span>
@@ -1838,9 +1838,9 @@ export function StaffDashboard() {
                   </div>
 
                   {/* Laboratory Test Results Table */}
-                  <div className="lab-results-container" style={{ marginTop: "16px" }}>
+                  <div className="lab-results-container" style={{ margin: "28px 0 20px 0" }}>
                     <h4><ClipboardList size={16} /> Laboratory Test Results with Reference Ranges</h4>
-                    <table className="enterprise-table" style={{ marginTop: "8px" }}>
+                    <table className="enterprise-table" style={{ marginTop: "12px" }}>
                       <thead>
                         <tr>
                           <th>Test Name</th>
@@ -1879,7 +1879,7 @@ export function StaffDashboard() {
               {/* TAB 6: Family & Emergency Information */}
               {patientModalActiveTab === "family" && (
                 <div className="tab-pane-content">
-                  <div className="sub-table-header" style={{ marginBottom: "12px" }}>
+                  <div className="sub-table-header" style={{ margin: "10px 0 22px 0" }}>
                     <h4><Users size={16} /> Family Contacts & Emergency Information</h4>
                     <button
                       className="btn-sm-primary"
@@ -1892,7 +1892,7 @@ export function StaffDashboard() {
                   {selectedPatientFamily.length === 0 ? (
                     <p className="empty-message-sm">No family contacts registered for this patient.</p>
                   ) : (
-                    <div className="family-contacts-grid">
+                    <div className="family-contacts-grid" style={{ margin: "18px 0 26px 0" }}>
                       {selectedPatientFamily.map((c) => (
                         <div className="family-contact-card" key={c.id}>
                           <div className="contact-card-top">
@@ -1918,7 +1918,7 @@ export function StaffDashboard() {
 
               {/* TAB 7: QR Passport Card */}
               {patientModalActiveTab === "qr-card" && (
-                <div className="tab-pane-content" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 0" }}>
+                <div className="tab-pane-content" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "26px 0 38px 0" }}>
                   <div className="physical-id-card">
                     <div className="id-card-header">
                       <div className="id-card-brand">
