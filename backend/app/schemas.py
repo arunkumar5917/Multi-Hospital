@@ -152,6 +152,7 @@ class PatientProfileUpdate(BaseModel):
     blood_group: str | None = None
     marital_status: str | None = None
     occupation: str | None = None
+    national_id: str | None = None
     insurance_provider: str | None = None
     insurance_policy_number: str | None = None
     insurance_valid_till: date | None = None

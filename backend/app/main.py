@@ -348,7 +348,7 @@ def seed_demo_data():
             prof1 = PatientProfile(
                 global_patient_id=gp1.id,
                 photo_url=f"/api/v1/patients/{gp1.grn}/photo",
-                age=28,
+                age=calculate_age(gp1.date_of_birth),
                 marital_status="Single",
                 occupation="Senior Systems Architect",
                 insurance_provider="Star Health Comprehensive Care",
@@ -357,6 +357,20 @@ def seed_demo_data():
                 national_id="IND-9842-1920-8341"
             )
             db.add(prof1); db.commit()
+
+        if not gp2.profile:
+            prof2 = PatientProfile(
+                global_patient_id=gp2.id,
+                photo_url=f"/api/v1/patients/{gp2.grn}/photo",
+                age=calculate_age(gp2.date_of_birth),
+                marital_status="Married",
+                occupation="Data Analyst",
+                insurance_provider="HDFC ERGO Health Suraksha",
+                insurance_policy_number="HE-MED-9941023",
+                insurance_valid_till=date(2028, 5, 31),
+                national_id="IND-9842-7721-5509"
+            )
+            db.add(prof2); db.commit()
 
         # 4. Patient-Hospital Links
         if db.query(PatientHospitalLink).count() == 0:
@@ -427,6 +441,11 @@ def seed_demo_data():
         pat_u1 = created_users.get("patient@x7medicore.local")
         if pat_u1 and not db.query(PatientAccount).filter(PatientAccount.user_id == pat_u1.id).first():
             db.add(PatientAccount(user_id=pat_u1.id, global_patient_id=gp1.id, primary_hospital_id=hospital_map["HOSP-001"].id))
+            db.commit()
+
+        pat_u2 = created_users.get("patient2@x7medicore.local")
+        if pat_u2 and not db.query(PatientAccount).filter(PatientAccount.user_id == pat_u2.id).first():
+            db.add(PatientAccount(user_id=pat_u2.id, global_patient_id=gp2.id, primary_hospital_id=hospital_map["HOSP-002"].id))
             db.commit()
 
         # 7. Doctors
@@ -1123,19 +1142,20 @@ def search_patients(
 # ----------------- SECTION 2: Patient Profile & Photos -----------------
 @app.get("/api/v1/patients/me", response_model=PatientProfileOut)
 @app.get("/api/v1/patient/profile", response_model=PatientProfileOut)
+@app.get("/api/v1/patients/{grn}/profile", response_model=PatientProfileOut)
 def get_my_patient_profile(
-    grn: str | None = Query(None),
+    grn: str | None = None,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
     request: Request = None
 ):
     gp = None
-    if user.role == "patient":
+    if grn and grn.lower() != "me":
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    elif user.role == "patient":
         account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
         if account and account.global_patient:
             gp = account.global_patient
-    elif grn:
-        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
 
     if not gp:
         gp = db.query(GlobalPatient).filter(GlobalPatient.grn == "XM-GRN-000001").first()
@@ -1146,20 +1166,22 @@ def get_my_patient_profile(
     return build_patient_profile_out(gp, user=user)
 
 @app.patch("/api/v1/patients/me", response_model=PatientProfileOut)
+@app.patch("/api/v1/patients/{grn}", response_model=PatientProfileOut)
+@app.patch("/api/v1/patients/{grn}/profile", response_model=PatientProfileOut)
 def update_my_patient_profile(
     payload: PatientProfileUpdate,
-    grn: str | None = Query(None),
+    grn: str | None = None,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
     request: Request = None
 ):
     gp = None
-    if user.role == "patient":
+    if grn and grn.lower() != "me":
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    elif user.role == "patient":
         account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
         if account and account.global_patient:
             gp = account.global_patient
-    elif grn:
-        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
 
     if not gp:
         gp = db.query(GlobalPatient).first()
@@ -1193,7 +1215,8 @@ def update_my_patient_profile(
             occupation=payload.occupation or "Professional",
             insurance_provider=payload.insurance_provider or "Star Health Comprehensive",
             insurance_policy_number=payload.insurance_policy_number or "SH-MED-8492019",
-            insurance_valid_till=payload.insurance_valid_till or date(2027, 8, 31)
+            insurance_valid_till=payload.insurance_valid_till or date(2027, 8, 31),
+            national_id=payload.national_id or "IND-9842-1920-8341"
         )
         db.add(prof)
     else:
@@ -1207,6 +1230,8 @@ def update_my_patient_profile(
             prof.insurance_policy_number = payload.insurance_policy_number
         if payload.insurance_valid_till is not None:
             prof.insurance_valid_till = payload.insurance_valid_till
+        if payload.national_id is not None:
+            prof.national_id = payload.national_id
         prof.age = calculate_age(gp.date_of_birth)
         prof.updated_at = datetime.utcnow()
 

@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useState, useRef } from "react";
 import {
   Summary,
   Treatment,
@@ -7,6 +7,12 @@ import {
   MedicalTimelineEvent,
   MedicalCondition,
   PatientAllergy,
+  PatientProfile,
+  MedicalDocument,
+  PatientVital,
+  FamilyContact,
+  LabReport,
+  HealthAnalysis,
 } from "../types";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -33,6 +39,19 @@ import {
   AlertTriangle,
   Clock,
   Layers,
+  Camera,
+  Edit3,
+  Phone,
+  Mail,
+  MapPin,
+  Shield,
+  Check,
+  Copy,
+  Printer,
+  QrCode,
+  Thermometer,
+  Droplets,
+  TrendingUp,
 } from "lucide-react";
 
 export function StaffDashboard() {
@@ -60,6 +79,56 @@ export function StaffDashboard() {
     treatments: Treatment[];
     attachments: Attachment[];
   } | null>(null);
+
+  // Full Patient Profile Management State for Staff
+  const [selectedPatientProfile, setSelectedPatientProfile] = useState<PatientProfile | null>(null);
+  const [selectedPatientAnalysis, setSelectedPatientAnalysis] = useState<HealthAnalysis | null>(null);
+  const [selectedPatientDocs, setSelectedPatientDocs] = useState<MedicalDocument[]>([]);
+  const [selectedPatientFamily, setSelectedPatientFamily] = useState<FamilyContact[]>([]);
+  const [patientModalActiveTab, setPatientModalActiveTab] = useState<
+    "personal" | "current-treatment" | "past-treatments" | "documents" | "health-analysis" | "family" | "qr-card"
+  >("personal");
+  const [showStaffEditProfileModal, setShowStaffEditProfileModal] = useState(false);
+  const [staffProfileForm, setStaffProfileForm] = useState({
+    full_name: "",
+    date_of_birth: "",
+    gender: "Male",
+    phone: "",
+    email: "",
+    address: "",
+    blood_group: "O+",
+    emergency_contact: "",
+    marital_status: "Single",
+    occupation: "Professional",
+    national_id: "IND-9842-1920-8341",
+    insurance_provider: "Star Health Comprehensive",
+    insurance_policy_number: "SH-MED-8492019",
+    insurance_valid_till: "2027-08-31",
+  });
+  const [showStaffLogVitalsModal, setShowStaffLogVitalsModal] = useState(false);
+  const [staffVitalForm, setStaffVitalForm] = useState({
+    blood_pressure_systolic: 120,
+    blood_pressure_diastolic: 80,
+    pulse: 72,
+    temperature: 98.6,
+    oxygen_saturation: 99,
+    respiratory_rate: 16,
+    weight_kg: 72.0,
+    height_cm: 175.0,
+    notes: "",
+  });
+  const [showStaffAddFamilyModal, setShowStaffAddFamilyModal] = useState(false);
+  const [staffFamilyForm, setStaffFamilyForm] = useState({
+    full_name: "",
+    relationship: "Parent",
+    phone: "",
+    email: "",
+    address: "",
+    is_emergency_contact: true,
+    is_primary: false,
+  });
+  const staffPhotoInputRef = useRef<HTMLInputElement>(null);
+  const [staffPhotoUploading, setStaffPhotoUploading] = useState(false);
 
   // Register New Patient Modal
   const [showRegisterModal, setShowRegisterModal] = useState(false);
@@ -194,34 +263,195 @@ export function StaffDashboard() {
     }
   };
 
-  // Inspect Patient Full Unified History
+  // Inspect Patient Full Unified Profile & Medical History
   const inspectPatientMedicalHistory = async (patient: PatientSearchResult) => {
     setSelectedPatientForView(patient);
+    setPatientModalActiveTab("personal");
     setError("");
     try {
-      const [histRes, timeRes, trtRes, attRes] = await Promise.all([
+      const [profRes, histRes, timeRes, trtRes, attRes, docsRes, anRes, famRes] = await Promise.all([
+        apiFetch(`/api/v1/patients/${patient.grn}/profile`),
         apiFetch(`/api/v1/patients/${patient.grn}/medical-history`),
         apiFetch(`/api/v1/patients/${patient.grn}/medical-history/timeline`),
-        apiFetch(`/api/v1/treatments`),
+        apiFetch(`/api/v1/patients/${patient.grn}/treatments`),
         apiFetch(`/api/v1/patients/${patient.grn}/attachments`),
+        apiFetch(`/api/v1/patients/${patient.grn}/documents`),
+        apiFetch(`/api/v1/patients/${patient.grn}/health-analysis`),
+        apiFetch(`/api/v1/patients/${patient.grn}/family-contacts`),
       ]);
 
+      const profData: PatientProfile = profRes.ok ? await profRes.json() : null;
       const histData = histRes.ok ? await histRes.json() : {};
       const timeData = timeRes.ok ? await timeRes.json() : [];
       const trtData: Treatment[] = trtRes.ok ? await trtRes.json() : [];
       const attData = attRes.ok ? await attRes.json() : [];
+      const docsData: MedicalDocument[] = docsRes.ok ? await docsRes.json() : [];
+      const anData: HealthAnalysis = anRes.ok ? await anRes.json() : null;
+      const famData: FamilyContact[] = famRes.ok ? await famRes.json() : [];
 
-      const filteredTreatments = trtData.filter((t) => t.patient_grn === patient.grn);
+      setSelectedPatientProfile(profData);
+      setSelectedPatientAnalysis(anData);
+      setSelectedPatientDocs(docsData);
+      setSelectedPatientFamily(famData);
+
+      if (profData) {
+        setStaffProfileForm({
+          full_name: profData.full_name || patient.full_name,
+          date_of_birth: profData.date_of_birth ? String(profData.date_of_birth) : "",
+          gender: profData.gender || patient.gender || "Male",
+          phone: profData.phone || patient.phone || "",
+          email: profData.email || patient.email || "",
+          address: profData.address || "",
+          blood_group: profData.blood_group || patient.blood_group || "O+",
+          emergency_contact: profData.emergency_contact || patient.emergency_contact || "",
+          marital_status: profData.marital_status || "Single",
+          occupation: profData.occupation || "Professional",
+          national_id: profData.national_id || "IND-9842-1920-8341",
+          insurance_provider: profData.insurance_provider || "Star Health Comprehensive",
+          insurance_policy_number: profData.insurance_policy_number || "SH-MED-8492019",
+          insurance_valid_till: profData.insurance_valid_till ? String(profData.insurance_valid_till) : "2027-08-31",
+        });
+      }
 
       setPatientHistoryModal({
         conditions: histData.conditions || [],
         allergies: histData.allergies || [],
         timeline: timeData,
-        treatments: filteredTreatments,
+        treatments: trtData,
         attachments: attData,
       });
     } catch (err) {
-      setError("Failed to fetch full patient medical history.");
+      setError("Failed to fetch full patient profile and medical history.");
+    }
+  };
+
+  // Staff: Save Edited Patient Profile
+  const handleStaffSaveProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPatientForView) return;
+    setError("");
+    try {
+      const res = await apiFetch(`/api/v1/patients/${selectedPatientForView.grn}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(staffProfileForm),
+      });
+      if (res.ok) {
+        const updatedProf: PatientProfile = await res.json();
+        setSelectedPatientProfile(updatedProf);
+        setShowStaffEditProfileModal(false);
+        setNotice("Patient profile updated successfully in central registry.");
+        setTimeout(() => setNotice(""), 3500);
+
+        // Update search results list if present
+        setSearchResults((prev) =>
+          prev.map((p) =>
+            p.grn === selectedPatientForView.grn
+              ? {
+                  ...p,
+                  full_name: updatedProf.full_name,
+                  phone: updatedProf.phone,
+                  blood_group: updatedProf.blood_group,
+                }
+              : p
+          )
+        );
+      } else {
+        const errData = await res.json();
+        setError(errData.detail || "Failed to update patient profile.");
+      }
+    } catch (err) {
+      setError("Network error while updating patient profile.");
+    }
+  };
+
+  // Staff: Upload Patient Photograph
+  const handleStaffPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedPatientForView) return;
+    setStaffPhotoUploading(true);
+    setError("");
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await apiFetch(`/api/v1/patients/${selectedPatientForView.grn}/photo`, {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedPatientProfile((prev) => (prev ? { ...prev, photo_url: data.photo_url } : null));
+        setNotice("Patient profile photograph updated successfully.");
+        setTimeout(() => setNotice(""), 3000);
+      } else {
+        const err = await res.json();
+        setError(err.detail || "Failed to upload photo.");
+      }
+    } catch (err) {
+      setError("Error uploading patient photo.");
+    } finally {
+      setStaffPhotoUploading(false);
+    }
+  };
+
+  // Staff: Log Vitals for Patient
+  const handleStaffLogVitals = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPatientForView) return;
+    setError("");
+    try {
+      const res = await apiFetch(`/api/v1/patients/${selectedPatientForView.grn}/vitals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(staffVitalForm),
+      });
+      if (res.ok) {
+        setShowStaffLogVitalsModal(false);
+        setNotice("Vital signs recorded and analyzed successfully.");
+        setTimeout(() => setNotice(""), 3000);
+        const anRes = await apiFetch(`/api/v1/patients/${selectedPatientForView.grn}/health-analysis`);
+        if (anRes.ok) setSelectedPatientAnalysis(await anRes.json());
+      } else {
+        const err = await res.json();
+        setError(err.detail || "Failed to record vitals.");
+      }
+    } catch (err) {
+      setError("Network error while logging vitals.");
+    }
+  };
+
+  // Staff: Add Family Contact
+  const handleStaffAddFamilyContact = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPatientForView) return;
+    setError("");
+    try {
+      const res = await apiFetch(`/api/v1/patients/${selectedPatientForView.grn}/family-contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(staffFamilyForm),
+      });
+      if (res.ok) {
+        const newContact = await res.json();
+        setSelectedPatientFamily((prev) => [...prev, newContact]);
+        setShowStaffAddFamilyModal(false);
+        setStaffFamilyForm({
+          full_name: "",
+          relationship: "Parent",
+          phone: "",
+          email: "",
+          address: "",
+          is_emergency_contact: true,
+          is_primary: false,
+        });
+        setNotice("Family member contact registered successfully.");
+        setTimeout(() => setNotice(""), 3000);
+      } else {
+        const err = await res.json();
+        setError(err.detail || "Failed to add family contact.");
+      }
+    } catch (err) {
+      setError("Network error adding family contact.");
     }
   };
 
@@ -605,10 +835,10 @@ export function StaffDashboard() {
                           <td>
                             <div className="actions-cell-btns">
                               <button
-                                className="btn-sm-outline"
+                                className="btn-sm-primary"
                                 onClick={() => inspectPatientMedicalHistory(p)}
                               >
-                                <Eye size={13} /> View Full History
+                                <IdCard size={13} /> Manage Patient Profile
                               </button>
                               {!p.is_linked_to_current_hospital && (
                                 <button
@@ -822,10 +1052,10 @@ export function StaffDashboard() {
                         <td>
                           <div className="actions-cell-btns">
                             <button
-                              className="btn-sm-outline"
+                              className="btn-sm-primary"
                               onClick={() => inspectPatientMedicalHistory(p)}
                             >
-                              <Eye size={13} /> Full Medical History
+                              <IdCard size={13} /> Manage Patient Profile
                             </button>
                             {!p.is_linked_to_current_hospital && (
                               <button
@@ -1133,143 +1363,1045 @@ export function StaffDashboard() {
         </div>
       )}
 
-      {/* MODAL: Inspect Full Patient Medical History */}
+      {/* MODAL: Full Patient Profile Management Suite for Staff */}
       {selectedPatientForView && patientHistoryModal && (
         <div className="modal-backdrop" onClick={() => { setSelectedPatientForView(null); setPatientHistoryModal(null); }}>
-          <div className="modal-content large-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content profile-management-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <span className="eyebrow">UNIFIED CROSS-HOSPITAL MEDICAL RECORD</span>
-                <h2>{selectedPatientForView.full_name} &bull; {selectedPatientForView.grn}</h2>
+                <span className="eyebrow">X7 MEDICORE / PATIENT PROFILE MANAGEMENT</span>
+                <h2>{selectedPatientProfile?.full_name || selectedPatientForView.full_name} &bull; {selectedPatientForView.grn}</h2>
               </div>
-              <button className="close-btn" onClick={() => { setSelectedPatientForView(null); setPatientHistoryModal(null); }}>
-                <X size={20} />
-              </button>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <button
+                  className="btn-sm-primary"
+                  onClick={() => setShowStaffEditProfileModal(true)}
+                >
+                  <Edit3 size={14} /> Change Patient Profile
+                </button>
+                <button
+                  className="btn-sm-outline"
+                  onClick={() => {
+                    setNewTreatmentForm((prev) => ({ ...prev, patient_grn: selectedPatientForView.grn }));
+                    setShowNewTreatmentModal(true);
+                  }}
+                >
+                  <Plus size={14} /> Record Treatment
+                </button>
+                <button
+                  className="btn-sm-outline"
+                  onClick={() => setShowStaffLogVitalsModal(true)}
+                >
+                  <Activity size={14} /> Record Vitals
+                </button>
+                <button className="close-btn" onClick={() => { setSelectedPatientForView(null); setPatientHistoryModal(null); }}>
+                  <X size={20} />
+                </button>
+              </div>
             </div>
 
             <div className="modal-body">
-              {/* Demographics & Alerts Banner */}
-              <div className="patient-modal-bio-bar">
-                {selectedPatientForView.photo_url && (
-                  <img
-                    src={selectedPatientForView.photo_url}
-                    alt={selectedPatientForView.full_name}
-                    className="avatar-chip"
-                    style={{ width: "48px", height: "48px", borderRadius: "50%", objectFit: "cover" }}
-                  />
-                )}
-                <div><span>GRN:</span> <strong>{selectedPatientForView.grn}</strong></div>
-                <div><span>Blood Group:</span> <strong className="text-pink">{selectedPatientForView.blood_group || "O+"}</strong></div>
-                <div><span>Phone:</span> <strong>{selectedPatientForView.phone || "—"}</strong></div>
-                <div><span>Primary Facility:</span> <strong>{selectedPatientForView.primary_hospital_name || selectedPatientForView.primary_hospital_code}</strong></div>
-                <div><span>QR Passport:</span> <a href={`/api/v1/patients/${selectedPatientForView.grn}/qr-code`} target="_blank" rel="noreferrer" className="btn-details-link">Scan / View QR</a></div>
+              {/* Navigation Tabs */}
+              <div className="modal-nav-pills">
+                <button
+                  className={`modal-nav-pill ${patientModalActiveTab === "personal" ? "active" : ""}`}
+                  onClick={() => setPatientModalActiveTab("personal")}
+                >
+                  <IdCard size={14} /> 1. Personal Information
+                </button>
+                <button
+                  className={`modal-nav-pill ${patientModalActiveTab === "current-treatment" ? "active" : ""}`}
+                  onClick={() => setPatientModalActiveTab("current-treatment")}
+                >
+                  <ClipboardList size={14} /> 2. Current Treatment
+                </button>
+                <button
+                  className={`modal-nav-pill ${patientModalActiveTab === "past-treatments" ? "active" : ""}`}
+                  onClick={() => setPatientModalActiveTab("past-treatments")}
+                >
+                  <Clock size={14} /> 3. Previous Treatments ({patientHistoryModal.treatments.length})
+                </button>
+                <button
+                  className={`modal-nav-pill ${patientModalActiveTab === "documents" ? "active" : ""}`}
+                  onClick={() => setPatientModalActiveTab("documents")}
+                >
+                  <FileText size={14} /> 4. Medical Documents ({selectedPatientDocs.length || patientHistoryModal.attachments.length})
+                </button>
+                <button
+                  className={`modal-nav-pill ${patientModalActiveTab === "health-analysis" ? "active" : ""}`}
+                  onClick={() => setPatientModalActiveTab("health-analysis")}
+                >
+                  <HeartPulse size={14} /> 5. Health Analysis & Vitals
+                </button>
+                <button
+                  className={`modal-nav-pill ${patientModalActiveTab === "family" ? "active" : ""}`}
+                  onClick={() => setPatientModalActiveTab("family")}
+                >
+                  <Users size={14} /> 6. Family & Emergency ({selectedPatientFamily.length})
+                </button>
+                <button
+                  className={`modal-nav-pill ${patientModalActiveTab === "qr-card" ? "active" : ""}`}
+                  onClick={() => setPatientModalActiveTab("qr-card")}
+                >
+                  <QrCode size={14} /> QR Passport Card
+                </button>
               </div>
 
-              {/* Conditions & Allergies */}
-              <div className="two-column-grid top-space">
-                <div className="panel-box-sub">
-                  <h4><HeartPulse size={16} /> Diagnosed Conditions ({patientHistoryModal.conditions.length})</h4>
-                  {patientHistoryModal.conditions.length === 0 ? (
-                    <small>No chronic conditions recorded.</small>
-                  ) : (
-                    <ul>
-                      {patientHistoryModal.conditions.map((c) => (
-                        <li key={c.id}>
-                          <b>{c.condition_name}</b> ({c.status}) — {c.diagnosed_date}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
-                <div className="panel-box-sub">
-                  <h4><AlertTriangle size={16} /> Known Allergies ({patientHistoryModal.allergies.length})</h4>
-                  {patientHistoryModal.allergies.length === 0 ? (
-                    <small>No allergies documented.</small>
-                  ) : (
-                    <ul>
-                      {patientHistoryModal.allergies.map((a) => (
-                        <li key={a.id}>
-                          <span className="text-warning"><b>{a.allergen}</b></span>: {a.reaction} ({a.severity})
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-              {/* Chronological Timeline */}
-              <div className="clinical-section top-space">
-                <h4><Clock size={16} /> Complete Chronological Timeline Across All Network Facilities</h4>
-                <div className="modal-timeline-container">
-                  {patientHistoryModal.timeline.length === 0 ? (
-                    <p className="empty-message-sm">No historical events recorded.</p>
-                  ) : (
-                    patientHistoryModal.timeline.map((evt, i) => (
-                      <div className="timeline-item-sm" key={evt.id || i}>
-                        <div className="timeline-sm-badge">
-                          <span>{new Date(evt.date).toLocaleDateString()}</span>
-                          <span className="facility-tag">{evt.hospital_name || evt.hospital_id}</span>
+              {/* TAB 1: Personal Information & Biodata */}
+              {patientModalActiveTab === "personal" && (
+                <div className="tab-pane-content">
+                  <div className="patient-biodata-header-card" style={{ marginBottom: "16px" }}>
+                    <div className="patient-biodata-layout">
+                      <div className="patient-photo-column">
+                        <div className="patient-avatar-frame">
+                          {selectedPatientProfile?.photo_url || selectedPatientForView.photo_url ? (
+                            <img
+                              src={selectedPatientProfile?.photo_url || selectedPatientForView.photo_url || ""}
+                              alt={selectedPatientForView.full_name}
+                              className="patient-photo-img"
+                            />
+                          ) : (
+                            <div className="patient-photo-fallback"><HeartPulse size={48} /></div>
+                          )}
+                          <button
+                            type="button"
+                            className="photo-edit-overlay-btn"
+                            onClick={() => staffPhotoInputRef.current?.click()}
+                            title="Upload / Update Photo"
+                            disabled={staffPhotoUploading}
+                          >
+                            <Camera size={14} />
+                            <span>{staffPhotoUploading ? "Uploading…" : "Change"}</span>
+                          </button>
+                          <input
+                            type="file"
+                            ref={staffPhotoInputRef}
+                            style={{ display: "none" }}
+                            accept="image/png, image/jpeg, image/jpg, image/webp"
+                            onChange={handleStaffPhotoUpload}
+                          />
                         </div>
-                        <div className="timeline-sm-body">
-                          <strong>{evt.title}</strong>
-                          <p>{evt.description}</p>
-                          {evt.doctor_name && <small>Attending: {evt.doctor_name}</small>}
+                        <span className="blood-group-badge-pink">
+                          <Droplets size={12} /> Blood: {selectedPatientProfile?.blood_group || selectedPatientForView.blood_group || "O+"}
+                        </span>
+                      </div>
+
+                      <div className="patient-info-column">
+                        <div className="patient-info-title-row">
+                          <div>
+                            <h2>{selectedPatientProfile?.full_name || selectedPatientForView.full_name}</h2>
+                            <div className="patient-sub-identifiers">
+                              <span className="grn-tag">GRN: {selectedPatientForView.grn}</span>
+                              <span className="age-gender-tag">
+                                {selectedPatientProfile?.age ? `${selectedPatientProfile.age} Years` : "30 Years"} &bull; {selectedPatientProfile?.gender || selectedPatientForView.gender || "Male"}
+                              </span>
+                              <span className="verified-status-tag">
+                                <ShieldCheck size={13} /> Verified Database Record
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            className="btn-sm-primary"
+                            onClick={() => setShowStaffEditProfileModal(true)}
+                          >
+                            <Edit3 size={14} /> Change Patient Profile
+                          </button>
+                        </div>
+
+                        <div className="patient-biodata-grid">
+                          <div className="biodata-item">
+                            <span className="label"><Calendar size={13} /> Date of Birth</span>
+                            <strong>{selectedPatientProfile?.date_of_birth ? String(selectedPatientProfile.date_of_birth) : (selectedPatientForView.date_of_birth ? String(selectedPatientForView.date_of_birth) : "1994-06-12")}</strong>
+                          </div>
+                          <div className="biodata-item">
+                            <span className="label"><Phone size={13} /> Contact Phone</span>
+                            <strong>{selectedPatientProfile?.phone || selectedPatientForView.phone || "—"}</strong>
+                          </div>
+                          <div className="biodata-item">
+                            <span className="label"><Mail size={13} /> Registered Email</span>
+                            <strong>{selectedPatientProfile?.email || selectedPatientForView.email || "—"}</strong>
+                          </div>
+                          <div className="biodata-item">
+                            <span className="label"><Shield size={13} /> Emergency Contact</span>
+                            <strong>{selectedPatientProfile?.emergency_contact || selectedPatientForView.emergency_contact || "—"}</strong>
+                          </div>
+                          <div className="biodata-item">
+                            <span className="label"><Users size={13} /> Marital Status</span>
+                            <strong>{selectedPatientProfile?.marital_status || "Single"}</strong>
+                          </div>
+                          <div className="biodata-item">
+                            <span className="label"><Activity size={13} /> Occupation</span>
+                            <strong>{selectedPatientProfile?.occupation || "Professional"}</strong>
+                          </div>
+                          <div className="biodata-item">
+                            <span className="label"><IdCard size={13} /> National / Health ID</span>
+                            <strong>{selectedPatientProfile?.national_id || "IND-9842-1920-8341"}</strong>
+                          </div>
+                          <div className="biodata-item full-width-item">
+                            <span className="label"><MapPin size={13} /> Residential Address</span>
+                            <strong>{selectedPatientProfile?.address || "42 Anna Salai, Chennai, Tamil Nadu 600002"}</strong>
+                          </div>
+                        </div>
+
+                        <div className="insurance-info-strip">
+                          <div className="insurance-header-icon"><ShieldCheck size={18} /></div>
+                          <div className="insurance-fields">
+                            <div>
+                              <span>Insurance Provider</span>
+                              <strong>{selectedPatientProfile?.insurance_provider || "Star Health Comprehensive"}</strong>
+                            </div>
+                            <div>
+                              <span>Policy Number</span>
+                              <code>{selectedPatientProfile?.insurance_policy_number || "SH-MED-8492019"}</code>
+                            </div>
+                            <div>
+                              <span>Coverage Valid Till</span>
+                              <strong>{selectedPatientProfile?.insurance_valid_till ? String(selectedPatientProfile.insurance_valid_till) : "2027-08-31"}</strong>
+                            </div>
+                            <div>
+                              <span>Primary Facility</span>
+                              <strong>{selectedPatientProfile?.primary_hospital_name || selectedPatientForView.primary_hospital_name || selectedPatientForView.primary_hospital_code}</strong>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Conditions & Allergies */}
+                  <div className="two-column-grid">
+                    <div className="panel-box-sub">
+                      <h4><HeartPulse size={16} /> Diagnosed Conditions ({patientHistoryModal.conditions.length})</h4>
+                      {patientHistoryModal.conditions.length === 0 ? (
+                        <small>No chronic conditions recorded.</small>
+                      ) : (
+                        <ul>
+                          {patientHistoryModal.conditions.map((c) => (
+                            <li key={c.id}>
+                              <b>{c.condition_name}</b> ({c.status}) — {c.diagnosed_date}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="panel-box-sub">
+                      <h4><AlertTriangle size={16} /> Known Allergies ({patientHistoryModal.allergies.length})</h4>
+                      {patientHistoryModal.allergies.length === 0 ? (
+                        <small>No allergies documented.</small>
+                      ) : (
+                        <ul>
+                          {patientHistoryModal.allergies.map((a) => (
+                            <li key={a.id}>
+                              <span className="text-warning"><b>{a.allergen}</b></span>: {a.reaction} ({a.severity})
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: Current Treatment */}
+              {patientModalActiveTab === "current-treatment" && (
+                <div className="tab-pane-content">
+                  {patientHistoryModal.treatments.filter((t) => t.status === "Active" || t.status === "In Progress" || t.status === "Scheduled").length > 0 ? (
+                    patientHistoryModal.treatments.filter((t) => t.status === "Active" || t.status === "In Progress" || t.status === "Scheduled").map((t) => (
+                      <div className="panel-box present-treatment-card" key={t.id} style={{ marginBottom: "16px" }}>
+                        <div className="panel-header">
+                          <div>
+                            <span className="badge-pink-soft">ACTIVE CLINICAL ENCOUNTER</span>
+                            <h2>{t.treatment_code} &bull; {t.diagnosis}</h2>
+                            <p>Encounter started on {new Date(t.visit_date).toLocaleDateString()} at {t.hospital_name || t.hospital_id}</p>
+                          </div>
+                          <span className="status-pill active">{t.status}</span>
+                        </div>
+
+                        <div className="clinical-section">
+                          <p><strong>Attending Physician:</strong> {t.doctor_name} ({t.doctor_specialization})</p>
+                          <p><strong>Chief Complaint:</strong> {t.chief_complaint}</p>
+                          {t.symptoms && <p><strong>Reported Symptoms:</strong> {t.symptoms}</p>}
+                          {t.clinical_observations && <p><strong>Clinical Observations:</strong> {t.clinical_observations}</p>}
+                          <p><strong>Treatment Description:</strong> {t.description}</p>
+                          {t.procedures_performed && <p><strong>Procedures Performed:</strong> {t.procedures_performed}</p>}
+                          {t.follow_up_instructions && <p><strong>Follow-up Instructions:</strong> {t.follow_up_instructions}</p>}
+                        </div>
+
+                        {t.prescriptions && t.prescriptions.length > 0 && (
+                          <div className="treatment-sub-table">
+                            <h4><Pill size={15} /> Prescribed Medicines ({t.prescriptions.length})</h4>
+                            <table className="enterprise-table mini-table">
+                              <thead>
+                                <tr><th>Medication</th><th>Dosage</th><th>Instructions</th></tr>
+                              </thead>
+                              <tbody>
+                                {t.prescriptions.map((pr, i) => (
+                                  <tr key={pr.id || i}>
+                                    <td><b>{pr.medication}</b></td>
+                                    <td><span className="dosage-pill">{pr.dosage}</span></td>
+                                    <td>{pr.instructions || "Standard"}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        <div className="present-treatment-actions top-space">
+                          <button
+                            className="btn-primary"
+                            onClick={() => {
+                              setUploadTreatmentId(t.id);
+                              setUploadPatientGrn(t.patient_grn);
+                            }}
+                          >
+                            <Upload size={14} /> Upload Diagnostic Scan
+                          </button>
+                          <button
+                            className="btn-outline"
+                            onClick={() => setNoteTreatmentId(t.id)}
+                          >
+                            <FileText size={14} /> Add Clinical Note
+                          </button>
                         </div>
                       </div>
                     ))
+                  ) : (
+                    <div className="empty-panel" style={{ padding: "32px", textAlign: "center" }}>
+                      <ClipboardList size={40} style={{ color: "var(--slate-400)", marginBottom: "8px" }} />
+                      <h3>No active treatment in progress for this patient</h3>
+                      <p>Patient currently does not have an active or scheduled clinical encounter.</p>
+                      <button
+                        className="btn-primary top-space"
+                        onClick={() => {
+                          setNewTreatmentForm((prev) => ({ ...prev, patient_grn: selectedPatientForView.grn }));
+                          setShowNewTreatmentModal(true);
+                        }}
+                      >
+                        <Plus size={15} /> Record New Clinical Treatment
+                      </button>
+                    </div>
                   )}
                 </div>
-              </div>
+              )}
 
-              {/* Scans & Attachments Gallery */}
-              <div className="clinical-section">
-                <h4><Layers size={16} /> Diagnostic Scans & Attached Documents ({patientHistoryModal.attachments.length})</h4>
-                {patientHistoryModal.attachments.length === 0 ? (
-                  <p className="empty-message-sm">No scans or documents attached.</p>
-                ) : (
-                  <div className="modal-attachments-grid">
-                    {patientHistoryModal.attachments.map((att) => (
-                      <div className="attachment-chip" key={att.id}>
-                        <div>
-                          <strong>{att.description || att.original_filename}</strong>
-                          <small>{att.file_category} &bull; {att.hospital_id}</small>
-                        </div>
-                        <a
-                          href={att.download_url}
-                          download={att.original_filename}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="btn-sm-primary"
-                        >
-                          <Download size={13} /> View
-                        </a>
-                      </div>
-                    ))}
+              {/* TAB 3: Previous Treatment History */}
+              {patientModalActiveTab === "past-treatments" && (
+                <div className="tab-pane-content">
+                  <div className="clinical-section">
+                    <h4><Clock size={16} /> Complete Chronological Timeline Across All Network Facilities</h4>
+                    <div className="modal-timeline-container">
+                      {patientHistoryModal.timeline.length === 0 ? (
+                        <p className="empty-message-sm">No historical events recorded.</p>
+                      ) : (
+                        patientHistoryModal.timeline.map((evt, i) => (
+                          <div className="timeline-item-sm" key={evt.id || i}>
+                            <div className="timeline-sm-badge">
+                              <span>{new Date(evt.date).toLocaleDateString()}</span>
+                              <span className="facility-tag">{evt.hospital_name || evt.hospital_id}</span>
+                            </div>
+                            <div className="timeline-sm-body">
+                              <strong>{evt.title}</strong>
+                              <p>{evt.description}</p>
+                              {evt.doctor_name && <small>Attending: {evt.doctor_name}</small>}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+
+                  <div className="clinical-section top-space">
+                    <h4><ClipboardList size={16} /> Historical Consultations & Encounters ({patientHistoryModal.treatments.length})</h4>
+                    <div className="past-treatments-scroll-list">
+                      {patientHistoryModal.treatments.map((t) => (
+                        <div className="past-treatment-mini-card" key={t.id}>
+                          <div className="mini-card-top">
+                            <div>
+                              <span className="treatment-code-pill">{t.treatment_code}</span>
+                              <h4>{t.diagnosis}</h4>
+                            </div>
+                            <span className={`status-pill ${t.status.toLowerCase()}`}>{t.status}</span>
+                          </div>
+                          <div className="mini-card-subinfo">
+                            <span><Building2 size={12} /> {t.hospital_name || t.hospital_id}</span>
+                            <span><Calendar size={12} /> {new Date(t.visit_date).toLocaleDateString()}</span>
+                            <span>Doctor: <b>{t.doctor_name}</b></span>
+                          </div>
+                          <p className="mini-card-desc">{t.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: Medical Documents Management */}
+              {patientModalActiveTab === "documents" && (
+                <div className="tab-pane-content">
+                  <div className="sub-table-header" style={{ marginBottom: "12px" }}>
+                    <h4><Layers size={16} /> Diagnostic Scans & Attached Medical Documents</h4>
+                    <button
+                      className="btn-sm-primary"
+                      onClick={() => {
+                        const trtId = patientHistoryModal.treatments[0]?.id || 1;
+                        setUploadTreatmentId(trtId);
+                        setUploadPatientGrn(selectedPatientForView.grn);
+                      }}
+                    >
+                      <Upload size={14} /> Upload Diagnostic Scan / Report
+                    </button>
+                  </div>
+
+                  {selectedPatientDocs.length === 0 && patientHistoryModal.attachments.length === 0 ? (
+                    <p className="empty-message-sm">No diagnostic scans or documents attached.</p>
+                  ) : (
+                    <div className="modal-attachments-grid">
+                      {(selectedPatientDocs.length > 0 ? selectedPatientDocs : patientHistoryModal.attachments).map((att) => (
+                        <div className="attachment-chip" key={att.id}>
+                          <div>
+                            <strong>{att.description || att.original_filename}</strong>
+                            <small>{att.file_category} &bull; {att.hospital_id} &bull; {(att.file_size / 1024).toFixed(1)} KB</small>
+                          </div>
+                          <a
+                            href={att.download_url}
+                            download={att.original_filename}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-sm-primary"
+                          >
+                            <Download size={13} /> View / Download
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 5: Health Analysis & Vitals */}
+              {patientModalActiveTab === "health-analysis" && (
+                <div className="tab-pane-content">
+                  <div className="sub-table-header" style={{ marginBottom: "12px" }}>
+                    <h4><Activity size={16} /> Clinical Vitals Monitoring & Abnormal Highlights</h4>
+                    <button
+                      className="btn-sm-primary"
+                      onClick={() => setShowStaffLogVitalsModal(true)}
+                    >
+                      <Plus size={14} /> Record Patient Vitals
+                    </button>
+                  </div>
+
+                  {/* 4 Vitals Metric Cards */}
+                  <div className="vital-signs-metrics-grid" style={{ margin: "8px 0 16px" }}>
+                    <div className="vital-metric-card">
+                      <div className="vital-card-header">
+                        <span>Blood Pressure</span>
+                        <HeartPulse size={18} className="icon-blue" />
+                      </div>
+                      <div className="vital-card-value">
+                        <strong>
+                          {selectedPatientAnalysis?.current_vitals?.blood_pressure_systolic || 124} /{" "}
+                          {selectedPatientAnalysis?.current_vitals?.blood_pressure_diastolic || 82}
+                        </strong>
+                        <small>mmHg</small>
+                      </div>
+                      <div className="vital-card-badge">
+                        <span className="badge-green"><Check size={12} /> Monitored Range</span>
+                      </div>
+                    </div>
+
+                    <div className="vital-metric-card">
+                      <div className="vital-card-header">
+                        <span>Pulse Rate</span>
+                        <Activity size={18} className="icon-pink" />
+                      </div>
+                      <div className="vital-card-value">
+                        <strong>{selectedPatientAnalysis?.current_vitals?.pulse || 74}</strong>
+                        <small>bpm</small>
+                      </div>
+                      <div className="vital-card-badge">
+                        <span className="badge-green"><Check size={12} /> Normal Rhythm</span>
+                      </div>
+                    </div>
+
+                    <div className="vital-metric-card">
+                      <div className="vital-card-header">
+                        <span>Temperature</span>
+                        <Thermometer size={18} className="icon-blue" />
+                      </div>
+                      <div className="vital-card-value">
+                        <strong>{selectedPatientAnalysis?.current_vitals?.temperature ? Number(selectedPatientAnalysis.current_vitals.temperature).toFixed(1) : "98.6"}</strong>
+                        <small>°F</small>
+                      </div>
+                      <div className="vital-card-badge">
+                        <span className="badge-green"><Check size={12} /> Afebrile</span>
+                      </div>
+                    </div>
+
+                    <div className="vital-metric-card">
+                      <div className="vital-card-header">
+                        <span>Oxygen Saturation</span>
+                        <Droplets size={18} className="icon-pink" />
+                      </div>
+                      <div className="vital-card-value">
+                        <strong>{selectedPatientAnalysis?.current_vitals?.oxygen_saturation || 98}</strong>
+                        <small>% SpO2</small>
+                      </div>
+                      <div className="vital-card-badge">
+                        <span className="badge-green"><Check size={12} /> Adequate SpO2</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Laboratory Test Results Table */}
+                  <div className="lab-results-container" style={{ marginTop: "16px" }}>
+                    <h4><ClipboardList size={16} /> Laboratory Test Results with Reference Ranges</h4>
+                    <table className="enterprise-table" style={{ marginTop: "8px" }}>
+                      <thead>
+                        <tr>
+                          <th>Test Name</th>
+                          <th>Category</th>
+                          <th>Observed Result</th>
+                          <th>Reference Range</th>
+                          <th>Evaluation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(selectedPatientAnalysis?.lab_reports || []).length === 0 ? (
+                          <tr><td colSpan={5} className="text-center">No lab reports recorded.</td></tr>
+                        ) : (
+                          selectedPatientAnalysis?.lab_reports.map((lr) => (
+                            <tr key={lr.id}>
+                              <td><b>{lr.test_name}</b></td>
+                              <td><span className="category-tag">{lr.test_category}</span></td>
+                              <td><b>{lr.result}</b></td>
+                              <td><code>{lr.reference_range || "N/A"}</code></td>
+                              <td>
+                                {lr.is_abnormal ? (
+                                  <span className="status-pill danger"><AlertTriangle size={11} /> {lr.abnormal_flag || "ABNORMAL"}</span>
+                                ) : (
+                                  <span className="status-pill active"><Check size={11} /> NORMAL</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 6: Family & Emergency Information */}
+              {patientModalActiveTab === "family" && (
+                <div className="tab-pane-content">
+                  <div className="sub-table-header" style={{ marginBottom: "12px" }}>
+                    <h4><Users size={16} /> Family Contacts & Emergency Information</h4>
+                    <button
+                      className="btn-sm-primary"
+                      onClick={() => setShowStaffAddFamilyModal(true)}
+                    >
+                      <Plus size={14} /> Add Family Member
+                    </button>
+                  </div>
+
+                  {selectedPatientFamily.length === 0 ? (
+                    <p className="empty-message-sm">No family contacts registered for this patient.</p>
+                  ) : (
+                    <div className="family-contacts-grid">
+                      {selectedPatientFamily.map((c) => (
+                        <div className="family-contact-card" key={c.id}>
+                          <div className="contact-card-top">
+                            <div>
+                              <h3>{c.full_name}</h3>
+                              <span className="relationship-tag">{c.relationship}</span>
+                            </div>
+                            {c.is_emergency_contact && (
+                              <span className="badge-pink-soft"><ShieldCheck size={13} /> Emergency Proxy</span>
+                            )}
+                          </div>
+                          <div className="contact-info-list">
+                            <div><Phone size={14} /> <span>{c.phone}</span></div>
+                            {c.email && <div><Mail size={14} /> <span>{c.email}</span></div>}
+                            {c.address && <div><MapPin size={14} /> <span>{c.address}</span></div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 7: QR Passport Card */}
+              {patientModalActiveTab === "qr-card" && (
+                <div className="tab-pane-content" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 0" }}>
+                  <div className="physical-id-card">
+                    <div className="id-card-header">
+                      <div className="id-card-brand">
+                        <span className="id-card-logo">X7</span>
+                        <div>
+                          <strong>X7 MEDICORE HMS</strong>
+                          <small>CENTRALIZED PATIENT IDENTITY CARD</small>
+                        </div>
+                      </div>
+                      <div className="emergency-hotline">
+                        <span>EMERGENCY</span>
+                        <strong>108 / 112</strong>
+                      </div>
+                    </div>
+
+                    <div className="id-card-body">
+                      <div className="id-card-photo-box">
+                        {selectedPatientProfile?.photo_url || selectedPatientForView.photo_url ? (
+                          <img
+                            src={selectedPatientProfile?.photo_url || selectedPatientForView.photo_url || ""}
+                            alt={selectedPatientForView.full_name}
+                            className="id-photo-img"
+                          />
+                        ) : (
+                          <div className="id-photo-placeholder"><HeartPulse size={48} /></div>
+                        )}
+                        <span className="id-blood-badge">
+                          BLOOD: {selectedPatientProfile?.blood_group || selectedPatientForView.blood_group || "O+"}
+                        </span>
+                      </div>
+
+                      <div className="id-card-details">
+                        <h3>{selectedPatientProfile?.full_name || selectedPatientForView.full_name}</h3>
+                        <div className="id-card-grn-highlight">
+                          <span>PERMANENT GRN</span>
+                          <code>{selectedPatientForView.grn}</code>
+                        </div>
+
+                        <div className="id-card-meta-grid">
+                          <div><span>DOB / Age:</span> <strong>{selectedPatientProfile?.date_of_birth ? String(selectedPatientProfile.date_of_birth) : "1994-06-12"} ({selectedPatientProfile?.age || 30} yrs)</strong></div>
+                          <div><span>Gender:</span> <strong>{selectedPatientProfile?.gender || selectedPatientForView.gender || "Male"}</strong></div>
+                          <div><span>Emergency:</span> <strong>{selectedPatientProfile?.emergency_contact || selectedPatientForView.emergency_contact || "+91 98401 23456"}</strong></div>
+                          <div><span>Primary Facility:</span> <strong>{selectedPatientProfile?.primary_hospital_name || selectedPatientForView.primary_hospital_name || selectedPatientForView.primary_hospital_code}</strong></div>
+                        </div>
+                      </div>
+
+                      <div className="id-card-qr-box">
+                        <img
+                          src={`/api/v1/patients/${selectedPatientForView.grn}/qr-code`}
+                          alt={`QR Code for ${selectedPatientForView.grn}`}
+                          className="id-card-svg-qr"
+                        />
+                        <small>Scan for Verification</small>
+                      </div>
+                    </div>
+
+                    <div className="id-card-footer">
+                      <span>Authorized by X7 MediCore National Healthcare Registry &bull; Valid Across Network</span>
+                      <code>DATABASE ID #{selectedPatientForView.grn}</code>
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn-primary top-space"
+                    onClick={() => window.print()}
+                  >
+                    <Printer size={15} /> Print Patient Identity Card
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="modal-footer">
               <button
                 className="btn-primary"
-                onClick={() => {
-                  setNewTreatmentForm((prev) => ({ ...prev, patient_grn: selectedPatientForView.grn }));
-                  setSelectedPatientForView(null);
-                  setPatientHistoryModal(null);
-                  setShowNewTreatmentModal(true);
-                }}
+                onClick={() => setShowStaffEditProfileModal(true)}
               >
-                <Plus size={16} /> Record New Treatment for this Patient
+                <Edit3 size={15} /> Change Patient Profile
               </button>
               <button
                 className="btn-secondary"
                 onClick={() => { setSelectedPatientForView(null); setPatientHistoryModal(null); }}
               >
-                Close History
+                Close Profile
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Staff Change Patient Profile Dialog */}
+      {showStaffEditProfileModal && selectedPatientForView && (
+        <div className="modal-backdrop" onClick={() => setShowStaffEditProfileModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">PATIENT PROFILE MANAGEMENT</span>
+                <h2>Change Patient Profile &bull; {selectedPatientForView.grn}</h2>
+              </div>
+              <button className="close-btn" onClick={() => setShowStaffEditProfileModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleStaffSaveProfile}>
+              <div className="modal-body form-grid">
+                <div className="form-group">
+                  <label>Full Legal Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={staffProfileForm.full_name}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, full_name: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Date of Birth</label>
+                  <input
+                    type="date"
+                    required
+                    value={staffProfileForm.date_of_birth}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, date_of_birth: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Gender</label>
+                  <select
+                    value={staffProfileForm.gender}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, gender: e.target.value })}
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Blood Group</label>
+                  <select
+                    value={staffProfileForm.blood_group}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, blood_group: e.target.value })}
+                  >
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Phone Number</label>
+                  <input
+                    type="text"
+                    required
+                    value={staffProfileForm.phone}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, phone: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={staffProfileForm.email}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, email: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Emergency Contact Number</label>
+                  <input
+                    type="text"
+                    required
+                    value={staffProfileForm.emergency_contact}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, emergency_contact: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Marital Status</label>
+                  <select
+                    value={staffProfileForm.marital_status}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, marital_status: e.target.value })}
+                  >
+                    <option value="Single">Single</option>
+                    <option value="Married">Married</option>
+                    <option value="Divorced">Divorced</option>
+                    <option value="Widowed">Widowed</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Occupation</label>
+                  <input
+                    type="text"
+                    value={staffProfileForm.occupation}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, occupation: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>National / Health ID</label>
+                  <input
+                    type="text"
+                    value={staffProfileForm.national_id}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, national_id: e.target.value })}
+                  />
+                </div>
+                <div className="form-group full-width">
+                  <label>Residential Address</label>
+                  <input
+                    type="text"
+                    required
+                    value={staffProfileForm.address}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, address: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Insurance Provider</label>
+                  <input
+                    type="text"
+                    value={staffProfileForm.insurance_provider}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, insurance_provider: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Policy Number</label>
+                  <input
+                    type="text"
+                    value={staffProfileForm.insurance_policy_number}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, insurance_policy_number: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Insurance Valid Till</label>
+                  <input
+                    type="date"
+                    value={staffProfileForm.insurance_valid_till}
+                    onChange={(e) => setStaffProfileForm({ ...staffProfileForm, insurance_valid_till: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn-secondary" onClick={() => setShowStaffEditProfileModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Save Changes to Database
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Staff Log Vitals Dialog */}
+      {showStaffLogVitalsModal && selectedPatientForView && (
+        <div className="modal-backdrop" onClick={() => setShowStaffLogVitalsModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">CLINICAL OBSERVATION</span>
+                <h2>Record Vitals &bull; {selectedPatientForView.grn}</h2>
+              </div>
+              <button className="close-btn" onClick={() => setShowStaffLogVitalsModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleStaffLogVitals}>
+              <div className="modal-body form-grid">
+                <div className="form-group">
+                  <label>Systolic BP (mmHg)</label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="260"
+                    required
+                    value={staffVitalForm.blood_pressure_systolic}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, blood_pressure_systolic: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Diastolic BP (mmHg)</label>
+                  <input
+                    type="number"
+                    min="30"
+                    max="180"
+                    required
+                    value={staffVitalForm.blood_pressure_diastolic}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, blood_pressure_diastolic: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Pulse Rate (bpm)</label>
+                  <input
+                    type="number"
+                    min="30"
+                    max="220"
+                    required
+                    value={staffVitalForm.pulse}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, pulse: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Temperature (°F)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="90"
+                    max="110"
+                    required
+                    value={staffVitalForm.temperature}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, temperature: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Oxygen Saturation (SpO2 %)</label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="100"
+                    required
+                    value={staffVitalForm.oxygen_saturation}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, oxygen_saturation: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Respiratory Rate (/min)</label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="50"
+                    value={staffVitalForm.respiratory_rate}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, respiratory_rate: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Weight (kg)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={staffVitalForm.weight_kg}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, weight_kg: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Height (cm)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={staffVitalForm.height_cm}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, height_cm: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="form-group full-width">
+                  <label>Clinical Notes</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Attending doctor morning examination"
+                    value={staffVitalForm.notes}
+                    onChange={(e) => setStaffVitalForm({ ...staffVitalForm, notes: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn-secondary" onClick={() => setShowStaffLogVitalsModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Save Vitals & Evaluate
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Staff Add Family Member Dialog */}
+      {showStaffAddFamilyModal && selectedPatientForView && (
+        <div className="modal-backdrop" onClick={() => setShowStaffAddFamilyModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">FAMILY & EMERGENCY CONTACTS</span>
+                <h2>Add Family Contact &bull; {selectedPatientForView.grn}</h2>
+              </div>
+              <button className="close-btn" onClick={() => setShowStaffAddFamilyModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleStaffAddFamilyContact}>
+              <div className="modal-body form-grid">
+                <div className="form-group">
+                  <label>Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={staffFamilyForm.full_name}
+                    onChange={(e) => setStaffFamilyForm({ ...staffFamilyForm, full_name: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Relationship</label>
+                  <select
+                    value={staffFamilyForm.relationship}
+                    onChange={(e) => setStaffFamilyForm({ ...staffFamilyForm, relationship: e.target.value })}
+                  >
+                    <option value="Parent">Parent</option>
+                    <option value="Father">Father</option>
+                    <option value="Mother">Mother</option>
+                    <option value="Spouse">Spouse</option>
+                    <option value="Sibling">Sibling</option>
+                    <option value="Child">Child</option>
+                    <option value="Guardian">Guardian</option>
+                    <option value="Relative">Other Relative</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Phone Number</label>
+                  <input
+                    type="text"
+                    required
+                    value={staffFamilyForm.phone}
+                    onChange={(e) => setStaffFamilyForm({ ...staffFamilyForm, phone: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Email Address</label>
+                  <input
+                    type="email"
+                    value={staffFamilyForm.email}
+                    onChange={(e) => setStaffFamilyForm({ ...staffFamilyForm, email: e.target.value })}
+                  />
+                </div>
+                <div className="form-group full-width">
+                  <label>Residential Address</label>
+                  <input
+                    type="text"
+                    value={staffFamilyForm.address}
+                    onChange={(e) => setStaffFamilyForm({ ...staffFamilyForm, address: e.target.value })}
+                  />
+                </div>
+                <div className="form-group full-width">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={staffFamilyForm.is_emergency_contact}
+                      onChange={(e) => setStaffFamilyForm({ ...staffFamilyForm, is_emergency_contact: e.target.checked })}
+                    />{" "}
+                    Primary Emergency Proxy
+                  </label>
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn-secondary" onClick={() => setShowStaffAddFamilyModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Save Family Member
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

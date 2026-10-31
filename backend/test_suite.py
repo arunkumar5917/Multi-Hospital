@@ -273,8 +273,21 @@ def run_all_tests():
     assert b"<svg" in qr_res.content
     print(f"✓ Test 18: Vector SVG QR code generated successfully for GRN XM-GRN-000001")
 
+    # 19. Staff Patient Profile Update (PATCH /api/v1/patients/{grn})
+    staff_patch_res = client.patch("/api/v1/patients/XM-GRN-000001", headers=doc_headers, json={
+        "occupation": "Senior Software Engineer",
+        "marital_status": "Married",
+        "national_id": "IND-AADHAAR-890123"
+    })
+    assert staff_patch_res.status_code == 200, f"Staff patient update failed: {staff_patch_res.text}"
+    staff_updated_profile = staff_patch_res.json()
+    assert staff_updated_profile["occupation"] == "Senior Software Engineer"
+    assert staff_updated_profile["marital_status"] == "Married"
+    assert staff_updated_profile["national_id"] == "IND-AADHAAR-890123"
+    print("✓ Test 19: Doctor / Clinical Staff successfully changed patient profile biodata")
+
     print("=====================================================================")
-    print("  ALL 18 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
+    print("  ALL 19 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
     print("=====================================================================")
 
 if __name__ == "__main__":

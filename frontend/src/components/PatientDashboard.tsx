@@ -103,6 +103,7 @@ export function PatientDashboard() {
     emergency_contact: "",
     marital_status: "Single",
     occupation: "Professional",
+    national_id: "IND-9842-1920-8341",
     insurance_provider: "Star Health Comprehensive",
     insurance_policy_number: "SH-MED-8492019",
     insurance_valid_till: "2027-08-31",
@@ -179,6 +180,7 @@ export function PatientDashboard() {
           emergency_contact: profData.emergency_contact || "",
           marital_status: profData.marital_status || "Single",
           occupation: profData.occupation || "Professional",
+          national_id: profData.national_id || "IND-9842-1920-8341",
           insurance_provider: profData.insurance_provider || "Star Health Comprehensive",
           insurance_policy_number: profData.insurance_policy_number || "SH-MED-8492019",
           insurance_valid_till: profData.insurance_valid_till ? String(profData.insurance_valid_till) : "2027-08-31",
@@ -736,7 +738,7 @@ export function PatientDashboard() {
                     className="btn-sm-primary"
                     onClick={() => setShowEditProfileModal(true)}
                   >
-                    <Edit3 size={14} /> Edit Biodata
+                    <Edit3 size={14} /> Change Patient Profile
                   </button>
                   <button
                     className="btn-sm-outline"
@@ -770,6 +772,18 @@ export function PatientDashboard() {
                 <div className="biodata-item">
                   <span className="label"><Shield size={13} /> Emergency Contact</span>
                   <strong>{profile?.emergency_contact || "+91 98401 23456"}</strong>
+                </div>
+                <div className="biodata-item">
+                  <span className="label"><Users size={13} /> Marital Status</span>
+                  <strong>{profile?.marital_status || "Single"}</strong>
+                </div>
+                <div className="biodata-item">
+                  <span className="label"><Activity size={13} /> Occupation</span>
+                  <strong>{profile?.occupation || "Senior Systems Architect"}</strong>
+                </div>
+                <div className="biodata-item">
+                  <span className="label"><IdCard size={13} /> National / Health ID</span>
+                  <strong>{profile?.national_id || "IND-9842-1920-8341"}</strong>
                 </div>
                 <div className="biodata-item full-width-item">
                   <span className="label"><MapPin size={13} /> Residential Address</span>
@@ -2118,6 +2132,34 @@ export function PatientDashboard() {
                     required
                     value={profileForm.emergency_contact}
                     onChange={(e) => setProfileForm({ ...profileForm, emergency_contact: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Marital Status</label>
+                  <select
+                    value={profileForm.marital_status}
+                    onChange={(e) => setProfileForm({ ...profileForm, marital_status: e.target.value })}
+                  >
+                    <option value="Single">Single</option>
+                    <option value="Married">Married</option>
+                    <option value="Divorced">Divorced</option>
+                    <option value="Widowed">Widowed</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Occupation</label>
+                  <input
+                    type="text"
+                    value={profileForm.occupation}
+                    onChange={(e) => setProfileForm({ ...profileForm, occupation: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>National / Health ID</label>
+                  <input
+                    type="text"
+                    value={profileForm.national_id}
+                    onChange={(e) => setProfileForm({ ...profileForm, national_id: e.target.value })}
                   />
                 </div>
                 <div className="form-group full-width">

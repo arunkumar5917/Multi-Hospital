@@ -2347,6 +2347,49 @@ a:hover {
   max-width: 900px;
 }
 
+.modal-content.profile-management-modal {
+  max-width: 1080px;
+  width: 95vw;
+}
+
+.modal-nav-pills {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 14px 2px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--slate-200);
+  scrollbar-width: thin;
+}
+
+.modal-nav-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--slate-100);
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--slate-600);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.modal-nav-pill:hover {
+  background: var(--slate-200);
+  color: var(--navy-900);
+}
+
+.modal-nav-pill.active {
+  background: var(--navy-800);
+  border-color: var(--navy-900);
+  color: #ffffff;
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.15);
+}
+
 .modal-header {
   padding: 20px 24px;
   border-bottom: 1px solid var(--slate-200);
