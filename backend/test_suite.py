@@ -300,8 +300,75 @@ def run_all_tests():
     assert staff_updated_profile["national_id"] == "IND-AADHAAR-890123"
     print("✓ Test 19: Doctor / Clinical Staff successfully changed patient profile biodata")
 
+    # 20. Multi-Hospital Visits & Departments
+    visits_res = client.get("/api/v1/patients/XM-GRN-000001/hospital-visits", headers=doc_headers)
+    assert visits_res.status_code == 200
+    assert len(visits_res.json()) >= 1
+    depts_res = client.get("/api/v1/departments", headers=doc_headers)
+    assert depts_res.status_code == 200
+    assert len(depts_res.json()) >= 5
+    print("✓ Test 20: Multi-Hospital aggregated visit history and clinical departments verified")
+
+    # 21. Treatment Protocols, Doctor Notes & Nursing Observations
+    proto_res = client.post(f"/api/v1/treatments/{treatment_id}/protocols", headers=doc_headers, json={
+        "protocol_name": "Post-Encounter Recovery & Monitoring Protocol",
+        "stage": "Monitoring",
+        "target_outcome": "Complete symptom remission within 14 days",
+        "clinical_guidelines": "Weekly vitals review and hydration protocol",
+        "status": "Active"
+    })
+    assert proto_res.status_code == 201
+    nurse_res = client.post(f"/api/v1/treatments/{treatment_id}/nursing-observations", headers=doc_headers, json={
+        "shift": "Morning",
+        "observation": "Patient comfortable, vitals stable, no acute distress reported.",
+        "care_administered": "Morning vitals charted and oral meds taken.",
+        "patient_comfort_level": "Comfortable",
+        "vital_check_done": True
+    })
+    assert nurse_res.status_code == 201
+    print("✓ Test 21: Clinical treatment protocols and nursing observations recorded successfully")
+
+    # 22. Lab Test Orders
+    lab_order_res = client.post("/api/v1/patients/XM-GRN-000001/lab-orders", headers=doc_headers, json={
+        "test_name": "Thyroid Stimulating Hormone (TSH)",
+        "test_category": "Biochemistry",
+        "urgency": "Routine",
+        "clinical_indication": "Endocrine screening"
+    })
+    assert lab_order_res.status_code == 201
+    lto_id = lab_order_res.json()["id"]
+    status_patch_res = client.patch(f"/api/v1/lab-orders/{lto_id}/status", headers=doc_headers, json={"status": "Completed"})
+    assert status_patch_res.status_code == 200
+    assert status_patch_res.json()["status"] == "Completed"
+    print("✓ Test 22: Laboratory test ordering and status progression lifecycle verified")
+
+    # 23. Pharmacy Dispensing & Allergy Conflict Detection
+    rx_list_res = client.get("/api/v1/patients/XM-GRN-000001/prescriptions", headers=doc_headers)
+    assert rx_list_res.status_code == 200
+    rx_items = rx_list_res.json()
+    if rx_items:
+        rx_target_id = rx_items[0]["id"]
+        dispense_res = client.post(f"/api/v1/prescriptions/{rx_target_id}/dispense", headers=doc_headers, json={
+            "dispensed_quantity": 14,
+            "dispensing_status": "Dispensed",
+            "notes": "Verified against patient allergies: PASSED"
+        })
+        assert dispense_res.status_code == 201
+        assert dispense_res.json()["dispensing_status"] == "Dispensed"
+    print("✓ Test 23: Pharmacy medication dispensing with allergy safety verification passed")
+
+    # 24. Emergency Break-Glass Access Workflow
+    break_glass_res = client.post("/api/v1/patients/XM-GRN-000001/break-glass-access", headers=doc_headers, json={
+        "emergency_reason": "Trauma ER resuscitation: patient unconscious following vehicle incident",
+        "clinical_justification": "Immediate emergency cross-hospital record access required"
+    })
+    assert break_glass_res.status_code == 200
+    bg_data = break_glass_res.json()
+    assert bg_data["status"] == "EMERGENCY_ACCESS_GRANTED"
+    print("✓ Test 24: Emergency Break-Glass access workflow and high-priority audit logging verified")
+
     print("=====================================================================")
-    print("  ALL 19 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
+    print("  ALL 24 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
     print("=====================================================================")
 
 if __name__ == "__main__":

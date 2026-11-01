@@ -17,6 +17,7 @@ import {
 } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { PatientProfilePhoto } from "./PatientProfilePhoto";
+import { CentralizedPatientProfile } from "./CentralizedPatientProfile";
 import {
   HeartPulse,
   IdCard,
@@ -60,8 +61,8 @@ export function PatientDashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [activeTab, setActiveTab] = useState<
-    "overview" | "current-treatment" | "past-treatments" | "health-analysis" | "documents" | "family" | "qr-card" | "consents" | "invoices"
-  >("overview");
+    "centralized" | "overview" | "current-treatment" | "past-treatments" | "health-analysis" | "documents" | "family" | "qr-card" | "consents" | "invoices"
+  >("centralized");
 
   // Core Data State
   const [profile, setProfile] = useState<PatientProfile | null>(null);
@@ -544,15 +545,20 @@ export function PatientDashboard() {
     <div className="app-shell">
       {/* ----------------- Enterprise Healthcare Sidebar ----------------- */}
       <aside className="sidebar patient-sidebar">
-        <div className="logo side-logo">
-          <span>X7</span>
-          <div>
-            <b>MEDICORE</b>
-            <small>PATIENT CARE PORTAL</small>
-          </div>
-        </div>
+        <img
+          src="/xora_logo.png"
+          alt="XORA Technologies"
+          className="side-logo brand-xora-side"
+        />
 
         <div className="nav-label">GLOBAL MEDICAL IDENTITY</div>
+
+        <button
+          className={`nav-button ${activeTab === "centralized" ? "active" : ""}`}
+          onClick={() => setActiveTab("centralized")}
+        >
+          <Sparkles size={18} /> Centralized Medical Record (11 Tabs)
+        </button>
 
         <button
           className={`nav-button ${activeTab === "overview" ? "active" : ""}`}
@@ -640,7 +646,7 @@ export function PatientDashboard() {
         {/* Top Header Bar */}
         <header className="topbar">
           <div>
-            <span className="eyebrow">X7 MEDICORE / DATABASE-BACKED HEALTH SYSTEM</span>
+            <span className="eyebrow">XORA TECHNOLOGIES / DATABASE-BACKED HEALTH SYSTEM</span>
             <h1>Comprehensive Patient Health Profile</h1>
           </div>
 
@@ -790,13 +796,26 @@ export function PatientDashboard() {
                   </div>
                   <div>
                     <span>Primary Facility</span>
-                    <strong>{profile?.primary_hospital_name || "X7 City Central Hospital (Chennai)"}</strong>
+                    <strong>{profile?.primary_hospital_name || "City Central Hospital (Chennai)"}</strong>
                   </div>
                 </div>
               </div>
             </div>
           </div>
         </section>
+
+        {/* -------------------------------------------------------------
+            TAB: CENTRALIZED MEDICAL PROFILE (11-Tab Unified Record System)
+           ------------------------------------------------------------- */}
+        {activeTab === "centralized" && (
+          <div className="centralized-view-container" style={{ margin: "-1rem", marginTop: "0.5rem" }}>
+            <CentralizedPatientProfile
+              grn={grn}
+              userRole="patient"
+              isSelfView={true}
+            />
+          </div>
+        )}
 
         {/* -------------------------------------------------------------
             TAB 1: OVERVIEW (Core 2-Column Split: Present Treatment & Past History + Health Analysis)
@@ -1138,7 +1157,7 @@ export function PatientDashboard() {
                             y1={y}
                             x2={svgWidth - padRight}
                             y2={y}
-                            stroke="#e2e8f0"
+                            stroke="#EAF1FF"
                             strokeDasharray="4 4"
                           />
                         </g>
@@ -1151,7 +1170,7 @@ export function PatientDashboard() {
                         {/* Systolic Blue Line */}
                         <polyline
                           fill="none"
-                          stroke="#2563eb"
+                          stroke="#071F68"
                           strokeWidth="3.5"
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -1160,7 +1179,7 @@ export function PatientDashboard() {
                         {/* Diastolic Pink Line */}
                         <polyline
                           fill="none"
-                          stroke="#ec4899"
+                          stroke="#F00072"
                           strokeWidth="3.5"
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -1171,14 +1190,14 @@ export function PatientDashboard() {
                           const x = padLeft + (i / Math.max(bpSystolicVals.length - 1, 1)) * chartInnerW;
                           const y = padTop + chartInnerH - ((val - 50) / 130) * chartInnerH;
                           return (
-                            <circle key={`sys-${i}`} cx={x} cy={y} r="5" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
+                            <circle key={`sys-${i}`} cx={x} cy={y} r="5" fill="#071F68" stroke="#ffffff" strokeWidth="2" />
                           );
                         })}
                         {bpDiastolicVals.map((val, i) => {
                           const x = padLeft + (i / Math.max(bpDiastolicVals.length - 1, 1)) * chartInnerW;
                           const y = padTop + chartInnerH - ((val - 50) / 130) * chartInnerH;
                           return (
-                            <circle key={`dia-${i}`} cx={x} cy={y} r="5" fill="#ec4899" stroke="#ffffff" strokeWidth="2" />
+                            <circle key={`dia-${i}`} cx={x} cy={y} r="5" fill="#F00072" stroke="#ffffff" strokeWidth="2" />
                           );
                         })}
                       </>
@@ -1187,7 +1206,7 @@ export function PatientDashboard() {
                         {/* Pulse Blue Line */}
                         <polyline
                           fill="none"
-                          stroke="#2563eb"
+                          stroke="#071F68"
                           strokeWidth="3.5"
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -1196,7 +1215,7 @@ export function PatientDashboard() {
                         {/* SpO2 Pink Line */}
                         <polyline
                           fill="none"
-                          stroke="#ec4899"
+                          stroke="#F00072"
                           strokeWidth="3.5"
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -1207,14 +1226,14 @@ export function PatientDashboard() {
                           const x = padLeft + (i / Math.max(pulseVals.length - 1, 1)) * chartInnerW;
                           const y = padTop + chartInnerH - ((val - 40) / 90) * chartInnerH;
                           return (
-                            <circle key={`pul-${i}`} cx={x} cy={y} r="5" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
+                            <circle key={`pul-${i}`} cx={x} cy={y} r="5" fill="#071F68" stroke="#ffffff" strokeWidth="2" />
                           );
                         })}
                         {spo2Vals.map((val, i) => {
                           const x = padLeft + (i / Math.max(spo2Vals.length - 1, 1)) * chartInnerW;
                           const y = padTop + chartInnerH - ((val - 80) / 20) * chartInnerH;
                           return (
-                            <circle key={`spo-${i}`} cx={x} cy={y} r="5" fill="#ec4899" stroke="#ffffff" strokeWidth="2" />
+                            <circle key={`spo-${i}`} cx={x} cy={y} r="5" fill="#F00072" stroke="#ffffff" strokeWidth="2" />
                           );
                         })}
                       </>
@@ -1234,7 +1253,7 @@ export function PatientDashboard() {
                           y={svgHeight - 10}
                           textAnchor="middle"
                           fontSize="11"
-                          fill="#64748b"
+                          fill="#172554"
                         >
                           {dateLabel}
                         </text>
@@ -1829,9 +1848,13 @@ export function PatientDashboard() {
               <div className="physical-id-card">
                 <div className="id-card-header">
                   <div className="id-card-brand">
-                    <span className="id-card-logo">X7</span>
+                    <img
+                      src="/xora_logo.png"
+                      alt="XORA Technologies"
+                      className="id-card-xora-logo"
+                    />
                     <div>
-                      <strong>X7 MEDICORE HMS</strong>
+                      <strong>XORA TECHNOLOGIES</strong>
                       <small>CENTRALIZED PATIENT IDENTITY CARD</small>
                     </div>
                   </div>
@@ -1881,7 +1904,7 @@ export function PatientDashboard() {
                       </div>
                       <div>
                         <span>Primary Facility:</span>
-                        <strong>{profile?.primary_hospital_name || "X7 City Central (Chennai)"}</strong>
+                        <strong>{profile?.primary_hospital_name || "City Central (Chennai)"}</strong>
                       </div>
                     </div>
                   </div>
@@ -1897,7 +1920,7 @@ export function PatientDashboard() {
                 </div>
 
                 <div className="id-card-footer">
-                  <span>Authorized by X7 MediCore National Healthcare Registry &bull; Valid Across All Network Facilities</span>
+                  <span>Authorized by XORA Technologies National Healthcare Registry &bull; Valid Across All Network Facilities</span>
                   <code>DATABASE ID #{profile?.grn || "XM-GRN-000001"}</code>
                 </div>
               </div>

@@ -34,6 +34,9 @@ export interface LoginResponse {
 export interface PatientProfile {
   grn: string;
   full_name: string;
+  first_name?: string;
+  last_name?: string;
+  hospital_patient_id?: string | null;
   date_of_birth?: string | null;
   age?: number | null;
   gender?: string | null;
@@ -43,6 +46,7 @@ export interface PatientProfile {
   blood_group?: string | null;
   emergency_contact?: string | null;
   photo_url?: string | null;
+  profile_photo_url?: string | null;
   marital_status?: string | null;
   occupation?: string | null;
   insurance_provider?: string | null;
@@ -53,6 +57,8 @@ export interface PatientProfile {
   primary_hospital_name?: string | null;
   registered_hospitals?: string[];
   registration_date?: string | null;
+  allergies?: PatientAllergy[];
+  medical_conditions?: MedicalCondition[];
 }
 
 export interface AuditLog {
@@ -146,6 +152,7 @@ export interface Attachment {
   patient_grn: string;
   hospital_id: string;
   original_filename: string;
+  document_name?: string;
   file_type: string;
   file_category: string;
   file_size: number;
@@ -174,7 +181,12 @@ export interface Treatment {
   doctor_specialization: string;
   hospital_id: string;
   hospital_name: string;
+  department?: string | null;
+  assigned_nurse?: string | null;
+  treatment_progress?: string | null;
   visit_date: string;
+  start_date?: string;
+  end_date?: string | null;
   chief_complaint: string;
   symptoms: string;
   clinical_observations: string;
@@ -189,6 +201,8 @@ export interface Treatment {
   attachments: Attachment[];
   notes: TreatmentNote[];
 }
+
+export type PrescriptionOut = PrescriptionItem;
 
 export interface PatientSearchResult {
   grn: string;
@@ -211,6 +225,7 @@ export interface PatientConsent {
   id: number;
   global_patient_id: number;
   requesting_hospital_id: string;
+  hospital_id?: string;
   requesting_hospital_name?: string | null;
   consent_type: string;
   status: string;
@@ -223,12 +238,16 @@ export interface MedicalAccessLog {
   id: number;
   user_id?: number | null;
   user_name?: string | null;
+  user_role?: string | null;
   hospital_id?: string | null;
   resource_type: string;
   resource_id?: string | null;
   action: string;
   ip_address?: string | null;
   accessed_at: string;
+  timestamp?: string;
+  is_break_glass?: boolean;
+  break_glass_reason?: string | null;
 }
 
 export interface MedicalDocument {
@@ -317,4 +336,128 @@ export interface TreatmentHistory {
   change_summary?: string | null;
   timestamp: string;
   changed_by_name?: string | null;
+}
+
+export interface HospitalDepartment {
+  id: number;
+  hospital_id: string;
+  name: string;
+  code: string;
+  floor?: string | null;
+  head_doctor?: string | null;
+  is_active: boolean;
+}
+
+export interface TreatmentProtocol {
+  id: number;
+  treatment_id: number;
+  protocol_name: string;
+  phase: string;
+  cycle_number?: number | null;
+  target_outcome?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DoctorNote {
+  id: number;
+  treatment_id: number;
+  doctor_id: number;
+  doctor_name: string;
+  note_type: string;
+  content: string;
+  created_at: string;
+}
+
+export interface NursingObservation {
+  id: number;
+  treatment_id: number;
+  nurse_id: number;
+  nurse_name: string;
+  observation_type: string;
+  vital_summary?: string | null;
+  notes: string;
+  recorded_at: string;
+}
+
+export interface LabTestOrder {
+  id: number;
+  treatment_id?: number | null;
+  global_patient_id: number;
+  patient_grn: string;
+  ordering_doctor_id: number;
+  hospital_id: string;
+  test_name: string;
+  test_category: string;
+  urgency: string;
+  clinical_indication?: string | null;
+  status: string; // "Pending" | "Sample Collected" | "In Analysis" | "Completed" | "Cancelled"
+  ordered_at: string;
+  completed_at?: string | null;
+  result_value?: string | null;
+  reference_range?: string | null;
+  technician_notes?: string | null;
+}
+
+export interface MedicationRecord {
+  id: number;
+  prescription_id: number;
+  global_patient_id: number;
+  pharmacist_id: number;
+  hospital_id: string;
+  dispensed_at: string;
+  dispensed_quantity: number;
+  dispensing_status: string;
+  allergy_conflict_checked: boolean;
+  allergy_warning?: string | null;
+  notes?: string | null;
+}
+
+export interface PatientSurgery {
+  id: number;
+  global_patient_id: number;
+  hospital_id: string;
+  surgery_name: string;
+  surgery_category?: string | null;
+  surgeon_name?: string | null;
+  surgery_date: string;
+  outcome?: string | null;
+  anesthesia_type?: string | null;
+  complications?: string | null;
+  notes?: string | null;
+}
+
+export interface EmergencyContact {
+  id: number;
+  global_patient_id: number;
+  name: string;
+  relationship: string;
+  phone: string;
+  email?: string | null;
+  priority: string; // "Primary" | "Secondary" | "Tertiary"
+  is_authorized_rep: boolean;
+  notification_preference: string; // "SMS" | "Call" | "Email" | "All"
+  created_at: string;
+}
+
+export interface HospitalVisitSummary {
+  hospital_id: string;
+  hospital_name: string;
+  hospital_code: string;
+  local_patient_id?: string | null;
+  visit_count: number;
+  first_visit?: string | null;
+  latest_visit?: string | null;
+  active_treatment_count: number;
+  has_active_consent: boolean;
+  departments: string[];
+}
+
+export interface BreakGlassResponse {
+  status: string;
+  message: string;
+  access_log_id: number;
+  grn: string;
+  granted_at: string;
+  expires_in_hours: number;
 }

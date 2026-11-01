@@ -102,7 +102,7 @@ export function HospitalSelector({ onHospitalSelected }: HospitalSelectorProps) 
       {loading ? (
         <div className="hospital-loading-state">
           <div className="pulse-loader"></div>
-          <p>Connecting to X7 Hospital Network Registry…</p>
+          <p>Connecting to XORA Hospital Network Registry…</p>
         </div>
       ) : filteredHospitals.length === 0 ? (
         <div className="no-hospitals-found">

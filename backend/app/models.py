@@ -78,6 +78,9 @@ class GlobalPatient(Base):
     vitals: Mapped[list["PatientVital"]] = relationship("PatientVital", back_populates="global_patient", cascade="all, delete-orphan", order_by="desc(PatientVital.recorded_at)")
     family_contacts: Mapped[list["FamilyContact"]] = relationship("FamilyContact", back_populates="global_patient", cascade="all, delete-orphan")
     consents: Mapped[list["PatientConsent"]] = relationship("PatientConsent", back_populates="global_patient")
+    surgeries: Mapped[list["PatientSurgery"]] = relationship("PatientSurgery", back_populates="global_patient", cascade="all, delete-orphan")
+    emergency_contacts: Mapped[list["EmergencyContact"]] = relationship("EmergencyContact", back_populates="global_patient", cascade="all, delete-orphan")
+    lab_orders: Mapped[list["LabTestOrder"]] = relationship("LabTestOrder", back_populates="global_patient", cascade="all, delete-orphan")
 
 class PatientProfile(Base):
     __tablename__ = "patient_profiles"
@@ -191,6 +194,9 @@ class Treatment(Base):
     procedures_performed: Mapped[str] = mapped_column(Text, default="", nullable=False)
     follow_up_instructions: Mapped[str] = mapped_column(Text, default="", nullable=False)
     next_appointment_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    department: Mapped[str | None] = mapped_column(String(120), nullable=True, default="General Medicine")
+    assigned_nurse: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    treatment_progress: Mapped[str | None] = mapped_column(String(100), nullable=True, default="Responding well to protocol")
     status: Mapped[str] = mapped_column(String(40), default="Active", index=True, nullable=False)  # Active, In Progress, Completed, Follow-up Required, Referred, Cancelled
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -198,6 +204,9 @@ class Treatment(Base):
     global_patient: Mapped["GlobalPatient"] = relationship("GlobalPatient", back_populates="treatments")
     doctor: Mapped["Doctor"] = relationship("Doctor", back_populates="treatments")
     notes: Mapped[list["TreatmentNote"]] = relationship("TreatmentNote", back_populates="treatment", cascade="all, delete-orphan")
+    protocols: Mapped[list["TreatmentProtocol"]] = relationship("TreatmentProtocol", back_populates="treatment", cascade="all, delete-orphan")
+    doctor_notes: Mapped[list["DoctorNote"]] = relationship("DoctorNote", back_populates="treatment", cascade="all, delete-orphan")
+    nursing_observations: Mapped[list["NursingObservation"]] = relationship("NursingObservation", back_populates="treatment", cascade="all, delete-orphan")
     attachments: Mapped[list["TreatmentAttachment"]] = relationship("TreatmentAttachment", back_populates="treatment")
     medical_documents: Mapped[list["MedicalDocument"]] = relationship("MedicalDocument", back_populates="treatment")
     prescriptions: Mapped[list["Prescription"]] = relationship("Prescription", back_populates="treatment")
@@ -401,7 +410,11 @@ class MedicalRecordAccessLog(Base):
     hospital_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
     resource_type: Mapped[str] = mapped_column(String(60), nullable=False)
     resource_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    action: Mapped[str] = mapped_column(String(40), nullable=False)  # VIEW, DOWNLOAD, EXPORT, CONSENT_CHECK
+    action: Mapped[str] = mapped_column(String(40), nullable=False)  # VIEW, DOWNLOAD, EXPORT, CONSENT_CHECK, BREAK_GLASS_EMERGENCY
+    is_break_glass: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    break_glass_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    user_role: Mapped[str | None] = mapped_column(String(60), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accessed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
@@ -514,3 +527,135 @@ class AuthenticationAuditLog(Base):
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     details: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+# ----------------- Additional Centralized Hospital & Clinical Models -----------------
+class HospitalDepartment(Base):
+    __tablename__ = "hospital_departments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hospital_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    code: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    head_of_department: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class TreatmentProtocol(Base):
+    __tablename__ = "treatment_protocols"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    treatment_id: Mapped[int] = mapped_column(ForeignKey("treatments.id", ondelete="CASCADE"), index=True, nullable=False)
+    protocol_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    stage: Mapped[str] = mapped_column(String(60), default="Active Therapy", nullable=False)
+    target_outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    clinical_guidelines: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="Active", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    treatment: Mapped["Treatment"] = relationship("Treatment", back_populates="protocols")
+
+class DoctorNote(Base):
+    __tablename__ = "doctor_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    treatment_id: Mapped[int] = mapped_column(ForeignKey("treatments.id", ondelete="CASCADE"), index=True, nullable=False)
+    doctor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    doctor_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    hospital_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    note_type: Mapped[str] = mapped_column(String(60), default="Clinical Assessment", nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    treatment: Mapped["Treatment"] = relationship("Treatment", back_populates="doctor_notes")
+
+class NursingObservation(Base):
+    __tablename__ = "nursing_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    treatment_id: Mapped[int] = mapped_column(ForeignKey("treatments.id", ondelete="CASCADE"), index=True, nullable=False)
+    global_patient_id: Mapped[int] = mapped_column(ForeignKey("global_patients.id", ondelete="CASCADE"), index=True, nullable=False)
+    nurse_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    nurse_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    hospital_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    shift: Mapped[str] = mapped_column(String(40), default="Day", nullable=False)  # Morning, Evening, Night
+    observation: Mapped[str] = mapped_column(Text, nullable=False)
+    care_administered: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    patient_comfort_level: Mapped[str] = mapped_column(String(60), default="Comfortable", nullable=False)
+    vital_check_done: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    treatment: Mapped["Treatment"] = relationship("Treatment", back_populates="nursing_observations")
+
+class MedicationRecord(Base):
+    __tablename__ = "medication_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    prescription_id: Mapped[int | None] = mapped_column(ForeignKey("prescriptions.id", ondelete="SET NULL"), index=True, nullable=True)
+    global_patient_id: Mapped[int] = mapped_column(ForeignKey("global_patients.id", ondelete="CASCADE"), index=True, nullable=False)
+    pharmacist_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pharmacist_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    hospital_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    medication: Mapped[str] = mapped_column(String(160), nullable=False)
+    dosage: Mapped[str] = mapped_column(String(160), nullable=False)
+    dispensed_quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    dispensed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    dispensing_status: Mapped[str] = mapped_column(String(50), default="Dispensed", nullable=False)
+    allergy_check_passed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class LabTestOrder(Base):
+    __tablename__ = "lab_test_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_code: Mapped[str] = mapped_column(String(40), unique=True, index=True, nullable=False)
+    global_patient_id: Mapped[int] = mapped_column(ForeignKey("global_patients.id", ondelete="CASCADE"), index=True, nullable=False)
+    treatment_id: Mapped[int | None] = mapped_column(ForeignKey("treatments.id", ondelete="SET NULL"), index=True, nullable=True)
+    ordered_by_doctor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    doctor_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    hospital_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    test_name: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    test_category: Mapped[str] = mapped_column(String(80), default="Hematology", nullable=False)
+    urgency: Mapped[str] = mapped_column(String(40), default="Routine", nullable=False)  # Routine, Urgent, STAT / Emergency
+    status: Mapped[str] = mapped_column(String(40), default="Pending", index=True, nullable=False)  # Pending, Sample Collected, In Analysis, Completed, Cancelled
+    clinical_indication: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ordered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    global_patient: Mapped["GlobalPatient"] = relationship("GlobalPatient", back_populates="lab_orders")
+
+class PatientSurgery(Base):
+    __tablename__ = "patient_surgeries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    global_patient_id: Mapped[int] = mapped_column(ForeignKey("global_patients.id", ondelete="CASCADE"), index=True, nullable=False)
+    hospital_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    procedure_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    surgeon_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    surgery_date: Mapped[date] = mapped_column(Date, default=date.today, nullable=False)
+    anesthesia_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(60), default="Successful", nullable=False)
+    complications: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    global_patient: Mapped["GlobalPatient"] = relationship("GlobalPatient", back_populates="surgeries")
+
+class EmergencyContact(Base):
+    __tablename__ = "emergency_contacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    global_patient_id: Mapped[int] = mapped_column(ForeignKey("global_patients.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    relation: Mapped[str] = mapped_column("relationship", String(60), nullable=False)
+    phone: Mapped[str] = mapped_column(String(40), nullable=False)
+    alternate_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    priority: Mapped[str] = mapped_column(String(40), default="Primary", nullable=False)
+    is_authorized_rep: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    notification_preferences: Mapped[str] = mapped_column(String(80), default="Call & SMS", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    global_patient: Mapped["GlobalPatient"] = relationship("GlobalPatient", back_populates="emergency_contacts")
+

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, desc
+from sqlalchemy import func, or_, desc, text
 import jwt
 from jwt import InvalidTokenError
 import qrcode
@@ -25,7 +25,9 @@ from .models import (
     PatientVital, FamilyContact, Prescription, MedicalReport, LabReport,
     PatientConsent, MedicalRecordAccessLog, MedicalRecordAuditLog,
     Patient, Doctor, Appointment, Invoice,
-    PasswordResetToken, UserSession, LoginAttempt, AuthenticationAuditLog
+    PasswordResetToken, UserSession, LoginAttempt, AuthenticationAuditLog,
+    HospitalDepartment, TreatmentProtocol, DoctorNote, NursingObservation,
+    MedicationRecord, LabTestOrder, PatientSurgery, EmergencyContact
 )
 from .schemas import (
     HospitalCreate, HospitalUpdate, HospitalOut,
@@ -41,7 +43,17 @@ from .schemas import (
     LabReportCreate, LabReportOut, HealthAnalysisOut,
     PatientConsentCreate, PatientConsentOut, MedicalAccessLogOut,
     UserOut, PatientCreate, PatientOut, DoctorCreate, DoctorOut,
-    AppointmentCreate, AppointmentOut, InvoiceCreate, InvoiceOut
+    AppointmentCreate, AppointmentOut, InvoiceCreate, InvoiceOut,
+    HospitalDepartmentCreate, HospitalDepartmentOut,
+    TreatmentProtocolCreate, TreatmentProtocolOut,
+    DoctorNoteCreate, DoctorNoteOut,
+    NursingObservationCreate, NursingObservationOut,
+    DispenseMedicationRequest, MedicationRecordOut,
+    LabTestOrderCreate, UpdateLabOrderStatus, LabTestOrderOut,
+    PatientSurgeryCreate, PatientSurgeryOut,
+    EmergencyContactCreate, EmergencyContactOut,
+    BreakGlassAccessRequest, BreakGlassAccessOut,
+    HospitalVisitSummaryOut
 )
 from .security import (
     hash_password, verify_password, create_access_token, create_refresh_token,
@@ -50,6 +62,26 @@ from .security import (
 
 load_dotenv()
 Base.metadata.create_all(bind=engine)
+
+def ensure_schema_columns():
+    with engine.connect() as conn:
+        statements = [
+            "ALTER TABLE treatments ADD COLUMN department VARCHAR(120) DEFAULT 'General Medicine'",
+            "ALTER TABLE treatments ADD COLUMN assigned_nurse VARCHAR(160)",
+            "ALTER TABLE treatments ADD COLUMN treatment_progress VARCHAR(100) DEFAULT 'Responding well to protocol'",
+            "ALTER TABLE medical_record_access_logs ADD COLUMN is_break_glass BOOLEAN DEFAULT 0",
+            "ALTER TABLE medical_record_access_logs ADD COLUMN break_glass_reason TEXT",
+            "ALTER TABLE medical_record_access_logs ADD COLUMN user_name VARCHAR(160)",
+            "ALTER TABLE medical_record_access_logs ADD COLUMN user_role VARCHAR(60)",
+        ]
+        for stmt in statements:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass
+
+ensure_schema_columns()
 
 STORAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage", "attachments"))
 DOCUMENTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "storage", "documents"))
@@ -284,6 +316,9 @@ def build_treatment_out(t: Treatment, db: Session) -> TreatmentOut:
         doctor_specialization=doc.specialization if doc else "General",
         hospital_id=t.hospital_id,
         hospital_name=hosp.name if hosp else t.hospital_id,
+        department=getattr(t, "department", None) or "General Medicine",
+        assigned_nurse=getattr(t, "assigned_nurse", None) or "Nurse Sarah Jenkins",
+        treatment_progress=getattr(t, "treatment_progress", None) or "Responding well to protocol",
         visit_date=t.visit_date,
         chief_complaint=t.chief_complaint,
         symptoms=t.symptoms,
@@ -685,6 +720,214 @@ def seed_demo_data():
             ])
             db.commit()
 
+        # 13. Hospital Departments
+        if db.query(HospitalDepartment).count() == 0:
+            dept_specs = [
+                ("Cardiology", "CARD", "Dr. Ramesh Varma", "Advanced cardiovascular diagnostics and interventional cardiology."),
+                ("Neurology", "NEUR", "Dr. Ananya Roy", "Brain and nervous system disorders clinical care."),
+                ("General Medicine", "GMED", "Dr. S. Karthik", "Comprehensive internal medicine and adult primary care."),
+                ("Emergency & Trauma", "EMER", "Dr. Rajiv Menon", "24/7 Level 1 Trauma, resuscitation & acute emergencies."),
+                ("Orthopedics", "ORTH", "Dr. Vikram Patel", "Bone, joint, musculoskeletal surgeries and rehab."),
+                ("Pathology & Lab", "PATH", "Dr. Sunita Iyer", "Automated clinical biochemistry, hematology, and diagnostics."),
+                ("Pharmacy", "PHAR", "Pharm. Devraj Nair", "Hospital dispensing and clinical pharmacology management.")
+            ]
+            for h_code in ["HOSP-001", "HOSP-002", "HOSP-003"]:
+                for name, code, head, desc in dept_specs:
+                    db.add(HospitalDepartment(
+                        hospital_id=h_code,
+                        name=name,
+                        code=f"{h_code}-{code}",
+                        head_of_department=head,
+                        description=desc,
+                        is_active=True
+                    ))
+            db.commit()
+
+        # 14. Treatment Protocols, Doctor Notes & Nursing Observations
+        t1 = db.query(Treatment).filter(Treatment.global_patient_id == gp1.id).order_by(Treatment.id.asc()).first()
+        if t1 and db.query(TreatmentProtocol).filter(TreatmentProtocol.treatment_id == t1.id).count() == 0:
+            db.add_all([
+                TreatmentProtocol(
+                    treatment_id=t1.id,
+                    protocol_name="Target BP & Glycemic Stabilization Protocol (AHA / ACC)",
+                    stage="Active Therapy",
+                    target_outcome="Maintain resting BP below 125/80 mmHg and HbA1c < 6.0%",
+                    clinical_guidelines="Daily morning ACE inhibitor therapy with Telmisartan 40mg. Weekly sodium-restricted diet log.",
+                    approved_by="Dr. S. Karthik (MD General Medicine)",
+                    status="Active"
+                ),
+                TreatmentProtocol(
+                    treatment_id=t1.id,
+                    protocol_name="Cardiovascular Aerobic Rehabilitation Schedule",
+                    stage="Maintenance",
+                    target_outcome="30 minutes daily moderate cardiovascular exercise",
+                    clinical_guidelines="Brisk walking, pulse target 110-125 bpm. Cease if chest tightness or dyspnea occurs.",
+                    approved_by="Dr. Priya Sundaram",
+                    status="Active"
+                )
+            ])
+            db.add_all([
+                DoctorNote(
+                    treatment_id=t1.id,
+                    doctor_id=1,
+                    doctor_name="Dr. S. Karthik",
+                    hospital_id="HOSP-001",
+                    note_type="Clinical Assessment",
+                    content="Patient presents steady recovery. Baseline resting vitals normal. Continue antihypertensive titration."
+                ),
+                DoctorNote(
+                    treatment_id=t1.id,
+                    doctor_id=2,
+                    doctor_name="Dr. Priya Sundaram",
+                    hospital_id="HOSP-002",
+                    note_type="Cross-Facility Consultation",
+                    content="Reviewed Bengaluru consultation notes. Lipid profile well within target range. Renal markers preserved."
+                )
+            ])
+            db.add_all([
+                NursingObservation(
+                    treatment_id=t1.id,
+                    global_patient_id=gp1.id,
+                    nurse_id=1,
+                    nurse_name="Nurse Sarah Jenkins (RN)",
+                    hospital_id="HOSP-001",
+                    shift="Morning",
+                    observation="Patient alert, oriented x4. Ambulating independently without shortness of breath.",
+                    care_administered="Vitals monitored, morning oral medication administered post-breakfast.",
+                    patient_comfort_level="Comfortable",
+                    vital_check_done=True
+                ),
+                NursingObservation(
+                    treatment_id=t1.id,
+                    global_patient_id=gp1.id,
+                    nurse_id=2,
+                    nurse_name="Nurse Kavita Pillai (RN)",
+                    hospital_id="HOSP-001",
+                    shift="Evening",
+                    observation="Evening BP stable at 118/76 mmHg. No reported dizziness or headache.",
+                    care_administered="Fluid intake monitored; hydration adequate (1.8L).",
+                    patient_comfort_level="Comfortable",
+                    vital_check_done=True
+                )
+            ])
+            db.commit()
+
+        # 15. Lab Test Orders
+        if db.query(LabTestOrder).filter(LabTestOrder.global_patient_id == gp1.id).count() == 0:
+            db.add_all([
+                LabTestOrder(
+                    order_code="LTO-2026-0001",
+                    global_patient_id=gp1.id,
+                    treatment_id=t1.id if t1 else None,
+                    ordered_by_doctor_id=1,
+                    doctor_name="Dr. S. Karthik",
+                    hospital_id="HOSP-001",
+                    test_name="Complete Blood Count (CBC) with Differential",
+                    test_category="Hematology",
+                    urgency="Routine",
+                    status="Completed",
+                    clinical_indication="Annual health review and viral screen",
+                    ordered_at=datetime.utcnow() - timedelta(days=20),
+                    completed_at=datetime.utcnow() - timedelta(days=20)
+                ),
+                LabTestOrder(
+                    order_code="LTO-2026-0002",
+                    global_patient_id=gp1.id,
+                    treatment_id=t1.id if t1 else None,
+                    ordered_by_doctor_id=2,
+                    doctor_name="Dr. Priya Sundaram",
+                    hospital_id="HOSP-002",
+                    test_name="Lipid Profile & Serum Creatinine",
+                    test_category="Biochemistry",
+                    urgency="Routine",
+                    status="Completed",
+                    clinical_indication="Cardiovascular risk assessment",
+                    ordered_at=datetime.utcnow() - timedelta(days=5),
+                    completed_at=datetime.utcnow() - timedelta(days=5)
+                ),
+                LabTestOrder(
+                    order_code="LTO-2026-0003",
+                    global_patient_id=gp1.id,
+                    treatment_id=t1.id if t1 else None,
+                    ordered_by_doctor_id=1,
+                    doctor_name="Dr. S. Karthik",
+                    hospital_id="HOSP-001",
+                    test_name="HbA1c & Fasting Plasma Glucose",
+                    test_category="Biochemistry",
+                    urgency="Urgent",
+                    status="In Analysis",
+                    clinical_indication="Quarterly glycemic control audit",
+                    ordered_at=datetime.utcnow() - timedelta(days=1)
+                )
+            ])
+            db.commit()
+
+        # 16. Medication Records (Pharmacy Dispensing)
+        rx1 = db.query(Prescription).filter(Prescription.global_patient_id == gp1.id).first()
+        if rx1 and db.query(MedicationRecord).filter(MedicationRecord.global_patient_id == gp1.id).count() == 0:
+            db.add_all([
+                MedicationRecord(
+                    prescription_id=rx1.id,
+                    global_patient_id=gp1.id,
+                    pharmacist_id=4,
+                    pharmacist_name="Pharm. Devraj Nair",
+                    hospital_id="HOSP-001",
+                    medication=rx1.medication,
+                    dosage=rx1.dosage,
+                    dispensed_quantity=30,
+                    dispensed_at=datetime.utcnow() - timedelta(days=10),
+                    dispensing_status="Dispensed",
+                    allergy_check_passed=True,
+                    notes="Verified dosage. Counselled patient on morning administration."
+                )
+            ])
+            db.commit()
+
+        # 17. Surgeries
+        if db.query(PatientSurgery).filter(PatientSurgery.global_patient_id == gp1.id).count() == 0:
+            db.add_all([
+                PatientSurgery(
+                    global_patient_id=gp1.id,
+                    hospital_id="HOSP-001",
+                    procedure_name="Laparoscopic Appendectomy",
+                    surgeon_name="Dr. Vikram Patel (MS General Surgery)",
+                    surgery_date=date(2021, 6, 12),
+                    anesthesia_type="General Anesthesia",
+                    outcome="Successful - Full Recovery",
+                    complications="None recorded. Clean healing with minimal scarring.",
+                    notes="Uneventful postoperative recovery. Discharged within 48 hours."
+                )
+            ])
+            db.commit()
+
+        # 18. Emergency Contacts
+        if db.query(EmergencyContact).filter(EmergencyContact.global_patient_id == gp1.id).count() == 0:
+            db.add_all([
+                EmergencyContact(
+                    global_patient_id=gp1.id,
+                    name="Deepa Kumar",
+                    relation="Spouse",
+                    phone="+91 98765 43200",
+                    alternate_phone="+91 44 2852 9999",
+                    email="deepa.kumar@example.com",
+                    priority="Primary",
+                    is_authorized_rep=True,
+                    notification_preferences="Call & SMS"
+                ),
+                EmergencyContact(
+                    global_patient_id=gp1.id,
+                    name="Sundararajan Kumar",
+                    relation="Father",
+                    phone="+91 98400 11223",
+                    alternate_phone=None,
+                    email="sundar.k@example.com",
+                    priority="Secondary",
+                    is_authorized_rep=False,
+                    notification_preferences="Call Only"
+                )
+            ])
+            db.commit()
+
 seed_demo_data()
 
 # ----------------- Dependencies & Current User -----------------
@@ -833,11 +1076,39 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Super Admin credentials required.")
     else:
         if user.role == "super_admin":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super Admin must sign in via /super-admin/login.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This is a Super Admin account. Please sign in at /super-admin/login."
+            )
         if portal == "hospital_admin" and user.role != "hospital_admin":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is not authorized as a Hospital Administrator.")
-        if portal == "general" and user.role not in PORTAL_ROLES["general"]:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Please use your dedicated portal to sign in.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is not a Hospital Administrator. Please use the portal that matches your role."
+            )
+
+        # "general" is kept as a backward-compatible alias for the combined
+        # Doctors & Staff / Patient entry point.
+        allowed_roles = PORTAL_ROLES["general"] if portal == "general" else PORTAL_ROLES.get(portal, set())
+        if user.role not in allowed_roles:
+            if user.role == "hospital_admin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This is a Hospital Administrator account. Please sign in at /hospital-admin/login."
+                )
+            if portal == "patient":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This is not a patient account. Please use the Doctors & Staff tab to sign in."
+                )
+            if portal == "staff":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Patient accounts must sign in from the Patient Portal tab."
+                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is not authorized for this portal. Please use your dedicated portal to sign in."
+            )
 
     hospital_name = None
     hospital_code = payload.hospital_code
@@ -1544,6 +1815,9 @@ def create_treatment(
         procedures_performed=payload.procedures_performed.strip(),
         follow_up_instructions=payload.follow_up_instructions.strip(),
         next_appointment_date=payload.next_appointment_date,
+        department=payload.department or "General Medicine",
+        assigned_nurse=payload.assigned_nurse or "Nurse Staff",
+        treatment_progress=payload.treatment_progress or "Responding well to protocol",
         status=payload.status
     )
     db.add(treatment)
@@ -2343,15 +2617,408 @@ def get_patient_access_logs(grn: str, db: Session = Depends(get_db), user: User 
         results.append(MedicalAccessLogOut(
             id=l.id,
             user_id=l.user_id,
-            user_name=u.full_name if u else None,
+            user_name=getattr(l, "user_name", None) or (u.full_name if u else "Clinical Staff"),
+            user_role=getattr(l, "user_role", None) or (u.role if u else "staff"),
             hospital_id=l.hospital_id,
             resource_type=l.resource_type,
             resource_id=l.resource_id,
             action=l.action,
+            is_break_glass=bool(getattr(l, "is_break_glass", False)),
+            break_glass_reason=getattr(l, "break_glass_reason", None),
             ip_address=l.ip_address,
             accessed_at=l.accessed_at
         ))
     return results
+
+# ----------------- SECTION 10: Multi-Hospital & Emergency Break-Glass -----------------
+@app.post("/api/v1/patients/{grn}/break-glass-access", response_model=BreakGlassAccessOut)
+def trigger_break_glass_access(
+    grn: str,
+    payload: BreakGlassAccessRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+
+    now = datetime.utcnow()
+    ip = request.client.host if request.client else "127.0.0.1"
+
+    # High-priority emergency audit log
+    access_log = MedicalRecordAccessLog(
+        global_patient_id=gp.id,
+        user_id=user.id,
+        user_name=user.full_name,
+        user_role=user.role,
+        hospital_id=user.hospital_id or "EMERGENCY",
+        resource_type="ALL_CLINICAL_RECORDS",
+        resource_id=gp.grn,
+        action="BREAK_GLASS_EMERGENCY",
+        is_break_glass=True,
+        break_glass_reason=f"REASON: {payload.emergency_reason}. JUSTIFICATION: {payload.clinical_justification or 'ER protocol'}",
+        ip_address=ip,
+        accessed_at=now
+    )
+    db.add(access_log)
+
+    audit_log = MedicalRecordAuditLog(
+        global_patient_id=gp.id,
+        user_id=user.id,
+        hospital_id=user.hospital_id or "EMERGENCY",
+        action="BREAK_GLASS_EMERGENCY",
+        target_table="global_patients",
+        target_id=gp.grn,
+        old_value="CONSENT_RESTRICTED",
+        new_value=f"UNRESTRICTED_EMERGENCY_OVERRIDE: {payload.emergency_reason}",
+        ip_address=ip,
+        created_at=now
+    )
+    db.add(audit_log)
+
+    # Automatically grant emergency consent
+    h_code = user.hospital_id or "HOSP-001"
+    existing_consent = db.query(PatientConsent).filter(
+        PatientConsent.global_patient_id == gp.id,
+        PatientConsent.requesting_hospital_id == h_code
+    ).first()
+    if not existing_consent:
+        em_consent = PatientConsent(
+            global_patient_id=gp.id,
+            requesting_hospital_id=h_code,
+            consent_type="emergency_break_glass",
+            status="granted",
+            notes=f"Emergency Break-Glass unlocked by {user.full_name} ({user.role}): {payload.emergency_reason}",
+            granted_at=now
+        )
+        db.add(em_consent)
+
+    db.commit()
+
+    return BreakGlassAccessOut(
+        status="EMERGENCY_ACCESS_GRANTED",
+        patient_grn=gp.grn,
+        patient_name=gp.full_name,
+        unlocked_at=now,
+        authorized_clinician=f"{user.full_name} ({user.role})",
+        emergency_reason=payload.emergency_reason,
+        message="Emergency Break-Glass override active. High-priority audit trail recorded. Full clinical history unlocked."
+    )
+
+@app.get("/api/v1/patients/{grn}/hospital-visits", response_model=list[HospitalVisitSummaryOut])
+def get_patient_hospital_visits(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+
+    links = db.query(PatientHospitalLink).filter(PatientHospitalLink.global_patient_id == gp.id).all()
+    treatments = db.query(Treatment).filter(Treatment.global_patient_id == gp.id).all()
+    hospitals = db.query(Hospital).all()
+    hosp_map = {h.code: h for h in hospitals}
+
+    hosp_treatments: dict[str, list[Treatment]] = {}
+    for t in treatments:
+        hosp_treatments.setdefault(t.hospital_id, []).append(t)
+
+    all_hosp_ids = set([l.hospital.code for l in links if l.hospital] + list(hosp_treatments.keys()))
+    if not all_hosp_ids:
+        all_hosp_ids = {"HOSP-001"}
+
+    res = []
+    for h_code in all_hosp_ids:
+        h_obj = hosp_map.get(h_code)
+        h_name = h_obj.name if h_obj else f"Facility {h_code}"
+        h_loc = h_obj.location if h_obj else "India"
+        t_list = hosp_treatments.get(h_code, [])
+        v_count = len(t_list) or 1
+        dates = [t.visit_date for t in t_list]
+        first_v = min(dates) if dates else gp.created_at
+        latest_v = max(dates) if dates else gp.created_at
+        departments = list(set([t.department or "General Medicine" for t in t_list])) or ["General Medicine"]
+        link = next((l for l in links if l.hospital and l.hospital.code == h_code), None)
+        local_id = link.local_patient_id if link else f"{h_code}-P{gp.id:03d}"
+        active_t = next((t.treatment_code for t in t_list if t.status == "Active"), None)
+
+        res.append(HospitalVisitSummaryOut(
+            hospital_code=h_code,
+            hospital_name=h_name,
+            location=h_loc,
+            visit_count=v_count,
+            first_visit=first_v,
+            latest_visit=latest_v,
+            departments=departments,
+            local_patient_id=local_id,
+            consent_status=link.consent_status if link else "granted",
+            active_treatment_code=active_t
+        ))
+
+    return sorted(res, key=lambda x: x.latest_visit, reverse=True)
+
+# ----------------- SECTION 11: Clinical Protocols, Notes & Observations -----------------
+@app.get("/api/v1/departments", response_model=list[HospitalDepartmentOut])
+@app.get("/api/v1/hospitals/{hospital_id}/departments", response_model=list[HospitalDepartmentOut])
+def get_hospital_departments(hospital_id: str | None = None, db: Session = Depends(get_db)):
+    q = db.query(HospitalDepartment).filter(HospitalDepartment.is_active.is_(True))
+    if hospital_id:
+        q = q.filter(HospitalDepartment.hospital_id == hospital_id)
+    return q.order_by(HospitalDepartment.name).all()
+
+@app.get("/api/v1/treatments/{treatment_id}/protocols", response_model=list[TreatmentProtocolOut])
+def get_treatment_protocols(treatment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return db.query(TreatmentProtocol).filter(TreatmentProtocol.treatment_id == treatment_id).order_by(desc(TreatmentProtocol.created_at)).all()
+
+@app.post("/api/v1/treatments/{treatment_id}/protocols", response_model=TreatmentProtocolOut, status_code=201)
+def add_treatment_protocol(
+    treatment_id: int,
+    payload: TreatmentProtocolCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin"))
+):
+    treatment = db.query(Treatment).filter(Treatment.id == treatment_id).first()
+    if not treatment:
+        raise HTTPException(status_code=404, detail="Treatment record not found")
+    protocol = TreatmentProtocol(
+        treatment_id=treatment_id,
+        protocol_name=payload.protocol_name,
+        stage=payload.stage,
+        target_outcome=payload.target_outcome,
+        clinical_guidelines=payload.clinical_guidelines,
+        approved_by=user.full_name,
+        status=payload.status
+    )
+    db.add(protocol); db.commit(); db.refresh(protocol)
+    return protocol
+
+@app.get("/api/v1/treatments/{treatment_id}/doctor-notes", response_model=list[DoctorNoteOut])
+def get_treatment_doctor_notes(treatment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return db.query(DoctorNote).filter(DoctorNote.treatment_id == treatment_id).order_by(desc(DoctorNote.created_at)).all()
+
+@app.post("/api/v1/treatments/{treatment_id}/doctor-notes", response_model=DoctorNoteOut, status_code=201)
+def add_treatment_doctor_note(
+    treatment_id: int,
+    payload: DoctorNoteCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin"))
+):
+    treatment = db.query(Treatment).filter(Treatment.id == treatment_id).first()
+    if not treatment:
+        raise HTTPException(status_code=404, detail="Treatment record not found")
+    note = DoctorNote(
+        treatment_id=treatment_id,
+        doctor_id=user.id,
+        doctor_name=user.full_name,
+        hospital_id=user.hospital_id or treatment.hospital_id,
+        note_type=payload.note_type,
+        content=payload.content
+    )
+    db.add(note); db.commit(); db.refresh(note)
+    return note
+
+@app.get("/api/v1/treatments/{treatment_id}/nursing-observations", response_model=list[NursingObservationOut])
+def get_nursing_observations(treatment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return db.query(NursingObservation).filter(NursingObservation.treatment_id == treatment_id).order_by(desc(NursingObservation.created_at)).all()
+
+@app.post("/api/v1/treatments/{treatment_id}/nursing-observations", response_model=NursingObservationOut, status_code=201)
+def add_nursing_observation(
+    treatment_id: int,
+    payload: NursingObservationCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("nurse", "doctor", "hospital_admin", "super_admin"))
+):
+    treatment = db.query(Treatment).filter(Treatment.id == treatment_id).first()
+    if not treatment:
+        raise HTTPException(status_code=404, detail="Treatment record not found")
+    obs = NursingObservation(
+        treatment_id=treatment_id,
+        global_patient_id=treatment.global_patient_id,
+        nurse_id=user.id,
+        nurse_name=user.full_name,
+        hospital_id=user.hospital_id or treatment.hospital_id,
+        shift=payload.shift,
+        observation=payload.observation,
+        care_administered=payload.care_administered,
+        patient_comfort_level=payload.patient_comfort_level,
+        vital_check_done=payload.vital_check_done
+    )
+    db.add(obs); db.commit(); db.refresh(obs)
+    return obs
+
+# ----------------- SECTION 12: Lab Orders & Pharmacy Dispensing -----------------
+@app.get("/api/v1/patients/{grn}/lab-orders", response_model=list[LabTestOrderOut])
+def get_patient_lab_orders(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return db.query(LabTestOrder).filter(LabTestOrder.global_patient_id == gp.id).order_by(desc(LabTestOrder.ordered_at)).all()
+
+@app.post("/api/v1/patients/{grn}/lab-orders", response_model=LabTestOrderOut, status_code=201)
+def create_lab_test_order(
+    grn: str,
+    payload: LabTestOrderCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin"))
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    count = db.query(func.count(LabTestOrder.id)).scalar() or 0
+    order_code = f"LTO-{datetime.utcnow().year}-{count + 1:04d}"
+    order = LabTestOrder(
+        order_code=order_code,
+        global_patient_id=gp.id,
+        treatment_id=payload.treatment_id,
+        ordered_by_doctor_id=user.id,
+        doctor_name=user.full_name,
+        hospital_id=user.hospital_id or "HOSP-001",
+        test_name=payload.test_name,
+        test_category=payload.test_category,
+        urgency=payload.urgency,
+        status="Pending",
+        clinical_indication=payload.clinical_indication,
+        ordered_at=datetime.utcnow()
+    )
+    db.add(order); db.commit(); db.refresh(order)
+    return order
+
+@app.patch("/api/v1/lab-orders/{order_id}/status", response_model=LabTestOrderOut)
+def update_lab_order_status(
+    order_id: int,
+    payload: UpdateLabOrderStatus,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("lab_tech", "doctor", "hospital_admin", "super_admin"))
+):
+    order = db.query(LabTestOrder).filter(LabTestOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Lab test order not found")
+    order.status = payload.status
+    if payload.status == "Completed":
+        order.completed_at = datetime.utcnow()
+    db.commit(); db.refresh(order)
+    return order
+
+@app.get("/api/v1/patients/{grn}/medication-records", response_model=list[MedicationRecordOut])
+def get_patient_medication_records(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return db.query(MedicationRecord).filter(MedicationRecord.global_patient_id == gp.id).order_by(desc(MedicationRecord.dispensed_at)).all()
+
+@app.get("/api/v1/patients/{grn}/prescriptions", response_model=list[PrescriptionOut])
+def get_patient_prescriptions(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    # Fetch treatments for patient to also catch any prescriptions linked through treatment
+    treatment_ids = [t.id for t in db.query(Treatment.id).filter(Treatment.global_patient_id == gp.id).all()]
+    prescriptions = db.query(Prescription).filter(
+        or_(
+            Prescription.global_patient_id == gp.id,
+            Prescription.treatment_id.in_(treatment_ids) if treatment_ids else False
+        )
+    ).order_by(desc(Prescription.prescribed_date), desc(Prescription.id)).all()
+    return [PrescriptionOut.model_validate(p) for p in prescriptions]
+
+@app.post("/api/v1/prescriptions/{prescription_id}/dispense", response_model=MedicationRecordOut, status_code=201)
+def dispense_prescription(
+    prescription_id: int,
+    payload: DispenseMedicationRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("pharmacist", "doctor", "hospital_admin", "super_admin"))
+):
+    p = db.query(Prescription).filter(Prescription.id == prescription_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    gp_id = p.global_patient_id
+    if not gp_id and p.treatment_id:
+        t = db.query(Treatment).filter(Treatment.id == p.treatment_id).first()
+        if t: gp_id = t.global_patient_id
+
+    # Check allergies
+    allergies = db.query(PatientAllergy).filter(PatientAllergy.global_patient_id == gp_id).all()
+    allergy_names = [a.allergen.lower() for a in allergies]
+    allergy_conflict = any(a in p.medication.lower() for a in allergy_names)
+
+    record = MedicationRecord(
+        prescription_id=prescription_id,
+        global_patient_id=gp_id or 1,
+        pharmacist_id=user.id,
+        pharmacist_name=user.full_name,
+        hospital_id=user.hospital_id or p.hospital_id,
+        medication=p.medication,
+        dosage=p.dosage,
+        dispensed_quantity=payload.dispensed_quantity,
+        dispensed_at=datetime.utcnow(),
+        dispensing_status=payload.dispensing_status if not allergy_conflict else "Cancelled - Allergy Conflict",
+        allergy_check_passed=not allergy_conflict,
+        notes=payload.notes or ("Allergy conflict detected with patient allergy record!" if allergy_conflict else "Verified and dispensed by pharmacy")
+    )
+    p.status = "dispensed" if not allergy_conflict else "cancelled"
+    db.add(record); db.commit(); db.refresh(record)
+    return record
+
+@app.get("/api/v1/patients/{grn}/surgeries", response_model=list[PatientSurgeryOut])
+def get_patient_surgeries(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return db.query(PatientSurgery).filter(PatientSurgery.global_patient_id == gp.id).order_by(desc(PatientSurgery.surgery_date)).all()
+
+@app.post("/api/v1/patients/{grn}/surgeries", response_model=PatientSurgeryOut, status_code=201)
+def add_patient_surgery(
+    grn: str,
+    payload: PatientSurgeryCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("doctor", "hospital_admin", "super_admin"))
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    surg = PatientSurgery(
+        global_patient_id=gp.id,
+        hospital_id=user.hospital_id or "HOSP-001",
+        procedure_name=payload.procedure_name,
+        surgeon_name=payload.surgeon_name,
+        surgery_date=payload.surgery_date,
+        anesthesia_type=payload.anesthesia_type,
+        outcome=payload.outcome,
+        complications=payload.complications,
+        notes=payload.notes
+    )
+    db.add(surg); db.commit(); db.refresh(surg)
+    return surg
+
+@app.get("/api/v1/patients/{grn}/emergency-contacts", response_model=list[EmergencyContactOut])
+def get_emergency_contacts(grn: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return db.query(EmergencyContact).filter(EmergencyContact.global_patient_id == gp.id).order_by(EmergencyContact.priority).all()
+
+@app.post("/api/v1/patients/{grn}/emergency-contacts", response_model=EmergencyContactOut, status_code=201)
+def add_emergency_contact(
+    grn: str,
+    payload: EmergencyContactCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    if not gp:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    ec = EmergencyContact(
+        global_patient_id=gp.id,
+        name=payload.name,
+        relation=payload.relation,
+        phone=payload.phone,
+        alternate_phone=payload.alternate_phone,
+        email=payload.email,
+        priority=payload.priority,
+        is_authorized_rep=payload.is_authorized_rep,
+        notification_preferences=payload.notification_preferences
+    )
+    db.add(ec); db.commit(); db.refresh(ec)
+    return ec
+
 
 # ----------------- Summary & Operational Metrics -----------------
 @app.get("/api/v1/dashboard/summary")

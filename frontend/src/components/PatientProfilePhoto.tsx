@@ -364,7 +364,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
           <div className="modal-content medium-modal photo-preview-modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <span className="eyebrow">X7 MEDICORE / PATIENT PROFILE PHOTO</span>
+                <span className="eyebrow">XORA TECHNOLOGIES / PATIENT PROFILE PHOTO</span>
                 <h2>{fullName} &bull; {grn}</h2>
               </div>
               <button className="close-btn" onClick={() => setShowPreviewModal(false)}>
@@ -454,7 +454,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
           <div className="modal-content medium-modal photo-preview-modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <span className="eyebrow">X7 MEDICORE / IMAGE COMPRESSION & RESIZING</span>
+                <span className="eyebrow">XORA TECHNOLOGIES / IMAGE COMPRESSION & RESIZING</span>
                 <h2>Confirm Profile Photo Upload</h2>
               </div>
               <button className="close-btn" onClick={() => setShowConfirmUploadModal(false)}>

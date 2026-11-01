@@ -363,6 +363,9 @@ class HealthAnalysisOut(BaseModel):
 class TreatmentCreate(BaseModel):
     patient_grn: str
     visit_date: datetime | None = None
+    department: str = "General Medicine"
+    assigned_nurse: str | None = None
+    treatment_progress: str | None = "Responding well to protocol"
     chief_complaint: str = Field(min_length=2, max_length=500)
     symptoms: str = ""
     clinical_observations: str = ""
@@ -375,6 +378,9 @@ class TreatmentCreate(BaseModel):
     prescriptions: list[PrescriptionItem] = []
 
 class TreatmentUpdate(BaseModel):
+    department: str | None = None
+    assigned_nurse: str | None = None
+    treatment_progress: str | None = None
     chief_complaint: str | None = None
     symptoms: str | None = None
     clinical_observations: str | None = None
@@ -398,6 +404,9 @@ class TreatmentOut(BaseModel):
     doctor_specialization: str
     hospital_id: str
     hospital_name: str
+    department: str | None = "General Medicine"
+    assigned_nurse: str | None = None
+    treatment_progress: str | None = None
     visit_date: datetime
     chief_complaint: str
     symptoms: str
@@ -440,10 +449,13 @@ class MedicalAccessLogOut(BaseModel):
     id: int
     user_id: int | None = None
     user_name: str | None = None
+    user_role: str | None = None
     hospital_id: str | None = None
     resource_type: str
     resource_id: str | None = None
     action: str
+    is_break_glass: bool = False
+    break_glass_reason: str | None = None
     ip_address: str | None = None
     accessed_at: datetime
 
@@ -499,3 +511,167 @@ class InvoiceOut(InvoiceCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
     hospital_id: str
+
+# ----------------- Additional Centralized Profile Schemas -----------------
+class HospitalDepartmentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    code: str = Field(min_length=2, max_length=40)
+    head_of_department: str | None = None
+    description: str | None = None
+
+class HospitalDepartmentOut(HospitalDepartmentCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    hospital_id: str
+    is_active: bool
+    created_at: datetime
+
+class TreatmentProtocolCreate(BaseModel):
+    protocol_name: str = Field(min_length=2, max_length=200)
+    stage: str = "Active Therapy"
+    target_outcome: str = Field(min_length=2)
+    clinical_guidelines: str = ""
+    status: str = "Active"
+
+class TreatmentProtocolOut(TreatmentProtocolCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    treatment_id: int
+    approved_by: str | None = None
+    created_at: datetime
+
+class DoctorNoteCreate(BaseModel):
+    note_type: str = "Clinical Assessment"
+    content: str = Field(min_length=2)
+
+class DoctorNoteOut(DoctorNoteCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    treatment_id: int
+    doctor_id: int | None = None
+    doctor_name: str
+    hospital_id: str
+    created_at: datetime
+
+class NursingObservationCreate(BaseModel):
+    shift: str = "Morning"  # Morning, Evening, Night
+    observation: str = Field(min_length=2)
+    care_administered: str = ""
+    patient_comfort_level: str = "Comfortable"
+    vital_check_done: bool = True
+
+class NursingObservationOut(NursingObservationCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    treatment_id: int
+    global_patient_id: int
+    nurse_id: int | None = None
+    nurse_name: str
+    hospital_id: str
+    created_at: datetime
+
+class DispenseMedicationRequest(BaseModel):
+    dispensed_quantity: int = Field(ge=1, default=1)
+    dispensing_status: str = "Dispensed"  # Dispensed, Partially Dispensed, Cancelled - Allergy Conflict
+    notes: str | None = None
+
+class MedicationRecordOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    prescription_id: int | None = None
+    global_patient_id: int
+    pharmacist_id: int | None = None
+    pharmacist_name: str
+    hospital_id: str
+    medication: str
+    dosage: str
+    dispensed_quantity: int
+    dispensed_at: datetime
+    dispensing_status: str
+    allergy_check_passed: bool
+    notes: str | None = None
+
+class LabTestOrderCreate(BaseModel):
+    treatment_id: int | None = None
+    test_name: str = Field(min_length=2, max_length=160)
+    test_category: str = "Hematology"
+    urgency: str = "Routine"  # Routine, Urgent, STAT / Emergency
+    clinical_indication: str | None = None
+
+class UpdateLabOrderStatus(BaseModel):
+    status: str  # Pending, Sample Collected, In Analysis, Completed, Cancelled
+
+class LabTestOrderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    order_code: str
+    global_patient_id: int
+    treatment_id: int | None = None
+    ordered_by_doctor_id: int | None = None
+    doctor_name: str
+    hospital_id: str
+    test_name: str
+    test_category: str
+    urgency: str
+    status: str
+    clinical_indication: str | None = None
+    ordered_at: datetime
+    completed_at: datetime | None = None
+
+class PatientSurgeryCreate(BaseModel):
+    procedure_name: str = Field(min_length=2, max_length=200)
+    surgeon_name: str = Field(min_length=2, max_length=160)
+    surgery_date: date = date.today()
+    anesthesia_type: str | None = None
+    outcome: str = "Successful"
+    complications: str | None = None
+    notes: str | None = None
+
+class PatientSurgeryOut(PatientSurgeryCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    global_patient_id: int
+    hospital_id: str
+    created_at: datetime
+
+class EmergencyContactCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    relation: str = Field(min_length=2, max_length=60)
+    phone: str = Field(min_length=6, max_length=40)
+    alternate_phone: str | None = None
+    email: str | None = None
+    priority: str = "Primary"
+    is_authorized_rep: bool = False
+    notification_preferences: str = "Call & SMS"
+
+class EmergencyContactOut(EmergencyContactCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    global_patient_id: int
+    created_at: datetime
+
+class BreakGlassAccessRequest(BaseModel):
+    emergency_reason: str = Field(min_length=10, max_length=1000)
+    clinical_justification: str | None = None
+
+class BreakGlassAccessOut(BaseModel):
+    status: str
+    patient_grn: str
+    patient_name: str
+    unlocked_at: datetime
+    authorized_clinician: str
+    emergency_reason: str
+    message: str
+
+class HospitalVisitSummaryOut(BaseModel):
+    hospital_code: str
+    hospital_name: str
+    location: str
+    visit_count: int
+    first_visit: datetime
+    latest_visit: datetime
+    departments: list[str] = []
+    local_patient_id: str | None = None
+    consent_status: str
+    active_treatment_code: str | None = None
+

@@ -157,13 +157,11 @@ export function SuperAdminDashboard() {
     <div className="app-shell">
       {/* Sidebar */}
       <aside className="sidebar super-admin-sidebar">
-        <div className="logo side-logo">
-          <span>X7</span>
-          <div>
-            <b>MEDICORE</b>
-            <small>SUPER ADMIN CONSOLE</small>
-          </div>
-        </div>
+        <img
+          src="/xora_logo.png"
+          alt="XORA Technologies"
+          className="side-logo brand-xora-side"
+        />
 
         <div className="nav-label">NETWORK GOVERNANCE</div>
 
@@ -206,7 +204,7 @@ export function SuperAdminDashboard() {
       <main className="main-area">
         <header className="topbar">
           <div>
-            <span className="eyebrow">X7 MEDICORE / PLATFORM GOVERNANCE</span>
+            <span className="eyebrow">XORA TECHNOLOGIES / PLATFORM GOVERNANCE</span>
             <h1>Super Admin Operations</h1>
           </div>
           <div className="top-user-pill">
@@ -485,7 +483,7 @@ export function SuperAdminDashboard() {
                     type="text"
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
-                    placeholder="e.g. X7 Apollo Health Institute"
+                    placeholder="e.g. Apollo Health Institute"
                     required
                   />
                 </div>

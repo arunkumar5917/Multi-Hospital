@@ -92,6 +92,11 @@ export function LoginForm({ portal, defaultTab = "staff" }: LoginFormProps) {
     setLoading(true);
 
     try {
+      // Send the specific portal for the selected tab so the backend can
+      // validate the account against the exact workflow being used.
+      const effectivePortal =
+        portal === "general" ? (activeTab === "patient" ? "patient" : "staff") : portal;
+
       const payload: {
         identifier: string;
         password: string;
@@ -101,7 +106,7 @@ export function LoginForm({ portal, defaultTab = "staff" }: LoginFormProps) {
       } = {
         identifier: identifier.trim(),
         password,
-        portal,
+        portal: effectivePortal,
         remember_me: rememberMe,
       };
 

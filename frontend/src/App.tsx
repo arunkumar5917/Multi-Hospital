@@ -32,13 +32,11 @@ function PublicHome() {
       {/* Navigation Header */}
       <header className="public-nav-header">
         <div className="logo brand-logo">
-          <div className="logo-symbol">
-            <span>X7</span>
-          </div>
-          <div>
-            <b>MEDICORE HMS</b>
-            <small>MULTI-HOSPITAL HEALTHCARE NETWORK</small>
-          </div>
+          <img
+            src="/xora_logo.png"
+            alt="XORA Technologies"
+            className="brand-xora-mark"
+          />
         </div>
 
         <div className="header-right-actions">
@@ -65,7 +63,7 @@ function PublicHome() {
       <footer className="public-footer">
         <div className="footer-content">
           <p>
-            <strong>X7 MediCore HMS</strong> &bull; Enterprise Multi-Hospital Healthcare Information System.
+            <strong>XORA Technologies</strong> &bull; Enterprise Multi-Hospital Healthcare Information System.
           </p>
           <div className="footer-links">
             <span><Lock size={13} /> 256-bit AES / TLS 1.3 Encryption</span>
@@ -78,32 +76,16 @@ function PublicHome() {
   );
 }
 
-function AuthHeader({ subtitle = "HOSPITAL MANAGEMENT SYSTEM" }: { subtitle?: string }) {
+function AuthHeader() {
   return (
     <header className="auth-page-header">
       <Link to="/" className="logo brand-logo">
-        <div className="logo-symbol">
-          <span>X7</span>
-        </div>
-        <div>
-          <b>MEDICORE</b>
-          <small>{subtitle}</small>
-        </div>
-      </Link>
-      <div className="auth-header-right">
-        <span className="auth-header-partner-label">Powered by</span>
         <img
-          src="/xora_logo.svg"
+          src="/xora_logo.png"
           alt="XORA Technologies"
-          className="auth-header-xora-logo"
-          onError={(e) => {
-            const img = e.currentTarget;
-            if (img.src.indexOf(".svg") !== -1) {
-              img.src = "/xora_logo.png";
-            }
-          }}
+          className="brand-xora-mark"
         />
-      </div>
+      </Link>
     </header>
   );
 }
@@ -139,7 +121,7 @@ function GeneralLoginPage() {
 function SuperAdminLoginPage() {
   return (
     <div className="auth-page-wrapper super-admin-theme">
-      <AuthHeader subtitle="SUPER ADMIN CONSOLE" />
+      <AuthHeader />
       <main className="auth-form-center">
         <LoginForm portal="super_admin" />
       </main>
