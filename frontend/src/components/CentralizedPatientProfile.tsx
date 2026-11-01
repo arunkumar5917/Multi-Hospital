@@ -782,7 +782,7 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
                   setProfile((prev) => prev ? { ...prev, photo_url: newUrl, profile_photo_url: newUrl } : null);
                 }}
                 canEdit={canEditBiodata}
-                className="w-16 h-16 sm:w-20 sm:h-20 shadow-sm"
+                className="centralized-profile-avatar"
               />
               <div>
                 <div className="flex flex-wrap items-center gap-2">

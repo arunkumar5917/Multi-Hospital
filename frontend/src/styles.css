@@ -3348,6 +3348,53 @@ a:hover {
   box-shadow: 0 6px 18px rgba(7, 31, 104, 0.22), 0 0 0 2px var(--blue-500);
 }
 
+.patient-photo-circle-frame.can-edit {
+  cursor: pointer;
+}
+
+.photo-camera-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 28, 104, 0.65);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #ffffff;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.patient-photo-circle-frame:hover .photo-camera-overlay {
+  opacity: 1;
+}
+
+.photo-camera-overlay span {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.centralized-profile-avatar {
+  flex-shrink: 0;
+  width: auto;
+}
+.centralized-profile-avatar .patient-photo-circle-frame {
+  width: 76px;
+  height: 76px;
+  min-width: 76px;
+  min-height: 76px;
+  max-width: 76px;
+  max-height: 76px;
+}
+.centralized-profile-avatar .patient-photo-action-buttons {
+  margin-top: -4px;
+}
+
 .patient-photo-circle-img {
   width: 100%;
   height: 100%;

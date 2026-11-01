@@ -1634,15 +1634,25 @@ def link_patient_to_hospital(
 
 MAX_PHOTO_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB limit
 
+@app.post("/api/v1/patients/me/photo")
 @app.post("/api/v1/patients/{grn}/photo")
 async def upload_patient_photo(
-    grn: str,
+    grn: str | None = None,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
     request: Request = None
 ):
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    gp = None
+    if grn and grn.lower() != "me":
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    elif user.role == "patient":
+        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
+        if account and account.global_patient:
+            gp = account.global_patient
+    if not gp:
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == "XM-GRN-000001").first()
+
     if not gp:
         raise HTTPException(status_code=404, detail="Patient GRN not found.")
 
@@ -1731,13 +1741,23 @@ async def upload_patient_photo(
         "message": "Profile photo processed, resized to 500x500 px, and saved successfully."
     }
 
+@app.delete("/api/v1/patients/me/photo")
 @app.delete("/api/v1/patients/{grn}/photo")
 def delete_patient_photo(
-    grn: str,
+    grn: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(current_user)
 ):
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    gp = None
+    if grn and grn.lower() != "me":
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    elif user.role == "patient":
+        account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
+        if account and account.global_patient:
+            gp = account.global_patient
+    if not gp:
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == "XM-GRN-000001").first()
+
     if not gp:
         raise HTTPException(status_code=404, detail="Patient GRN not found.")
 
@@ -1759,9 +1779,15 @@ def delete_patient_photo(
                       None, f"Removed profile photo for {gp.grn}")
     return {"message": "Profile photo removed successfully.", "photo_url": None}
 
+@app.get("/api/v1/patients/me/photo")
 @app.get("/api/v1/patients/{grn}/photo")
-def get_patient_photo(grn: str, db: Session = Depends(get_db)):
-    gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+def get_patient_photo(grn: str | None = None, db: Session = Depends(get_db)):
+    gp = None
+    if grn and grn.lower() != "me":
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    else:
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == "XM-GRN-000001").first()
+
     if not gp:
         raise HTTPException(status_code=404, detail="Patient not found.")
 

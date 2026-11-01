@@ -5,13 +5,28 @@ import {
   Trash2,
   Upload,
   X,
-  Check,
   AlertCircle,
   RefreshCw,
   User,
   CheckCircle2,
 } from "lucide-react";
-import { useAuth } from "../context/AuthContext";
+import { API_URL, useAuth } from "../context/AuthContext";
+
+export const resolvePhotoUrl = (url: string | null | undefined): string => {
+  if (!url) return "";
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  if (
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://")
+  ) {
+    return trimmed;
+  }
+  const cleanPath = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${API_URL}${cleanPath}`;
+};
 
 export interface PatientProfilePhotoProps {
   grn: string;
@@ -30,7 +45,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
   canEdit = true,
   className = "",
 }) => {
-  const { apiFetch } = useAuth();
+  const { user, apiFetch } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Local state
@@ -196,7 +211,12 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
       const filename = stagedFile.originalName.replace(/\.[^.]+$/, ".jpg");
       formData.append("file", stagedFile.file, filename);
 
-      const res = await apiFetch(`/api/v1/patients/${encodeURIComponent(grn)}/photo`, {
+      const targetGrn =
+        grn && grn.trim() && grn.trim().toLowerCase() !== "me"
+          ? grn.trim()
+          : (user?.grn || "me");
+
+      const res = await apiFetch(`/api/v1/patients/${encodeURIComponent(targetGrn)}/photo`, {
         method: "POST",
         body: formData,
       });
@@ -212,7 +232,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
         if (onPhotoUpdated) onPhotoUpdated(updatedUrl);
         setTimeout(() => setSuccessMsg(""), 3500);
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         setErrorMsg(err.detail || "Failed to upload profile photo.");
       }
     } catch {
@@ -228,7 +248,12 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
     setErrorMsg("");
 
     try {
-      const res = await apiFetch(`/api/v1/patients/${encodeURIComponent(grn)}/photo`, {
+      const targetGrn =
+        grn && grn.trim() && grn.trim().toLowerCase() !== "me"
+          ? grn.trim()
+          : (user?.grn || "me");
+
+      const res = await apiFetch(`/api/v1/patients/${encodeURIComponent(targetGrn)}/photo`, {
         method: "DELETE",
       });
 
@@ -240,7 +265,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
         if (onPhotoUpdated) onPhotoUpdated(null);
         setTimeout(() => setSuccessMsg(""), 3500);
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         setErrorMsg(err.detail || "Failed to remove profile photo.");
       }
     } catch {
@@ -250,7 +275,8 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
     }
   };
 
-  const hasCustomPhoto = !!currentPhoto && !imageLoadError;
+  const resolvedPhotoSrc = resolvePhotoUrl(currentPhoto);
+  const hasCustomPhoto = !!currentPhoto && !!resolvedPhotoSrc && !imageLoadError;
   const initial = (fullName ? fullName[0] : "P").toUpperCase();
 
   return (
@@ -265,10 +291,18 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
       />
 
       {/* 120 × 120 px Circular Profile Image Frame */}
-      <div className="patient-photo-circle-frame" title={fullName}>
+      <div
+        className={`patient-photo-circle-frame ${canEdit ? "can-edit" : ""}`}
+        title={canEdit ? "Click to set or change profile photo" : fullName}
+        onClick={() => {
+          if (canEdit && !isProcessing && !isUploading) {
+            fileInputRef.current?.click();
+          }
+        }}
+      >
         {hasCustomPhoto ? (
           <img
-            src={currentPhoto!}
+            src={resolvedPhotoSrc}
             alt={fullName}
             className="patient-photo-circle-img"
             onError={() => setImageLoadError(true)}
@@ -281,6 +315,14 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
                 <User size={13} />
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Hover Camera Overlay when editable */}
+        {canEdit && !isProcessing && !isUploading && (
+          <div className="photo-camera-overlay">
+            <Camera size={20} />
+            <span>Set Photo</span>
           </div>
         )}
 
@@ -311,7 +353,10 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
               <button
                 type="button"
                 className="photo-btn-icon"
-                onClick={() => setShowPreviewModal(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowPreviewModal(true);
+                }}
                 title="Preview photo (500 × 500 px)"
               >
                 <Eye size={13} />
@@ -321,7 +366,10 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
               <button
                 type="button"
                 className="photo-btn-icon"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
                 disabled={isProcessing || isUploading}
                 title="Change photo (Max 2 MB, 500×500 px)"
               >
@@ -332,7 +380,10 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
               <button
                 type="button"
                 className="photo-btn-icon danger"
-                onClick={() => setShowDeleteConfirmModal(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowDeleteConfirmModal(true);
+                }}
                 disabled={isDeleting}
                 title="Remove photo & restore default avatar"
               >
@@ -353,7 +404,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
       )}
       {successMsg && (
         <div className="photo-status-notice success">
-          <Check size={12} />
+          <CheckCircle2 size={12} />
           <span>{successMsg}</span>
         </div>
       )}
@@ -382,7 +433,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
                   </div>
                   <div className="photo-square-500-box">
                     <img
-                      src={currentPhoto!}
+                      src={resolvedPhotoSrc}
                       alt={fullName}
                       className="photo-square-500-img"
                     />
@@ -397,7 +448,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
                   </div>
                   <div className="photo-circle-120-box">
                     <img
-                      src={currentPhoto!}
+                      src={resolvedPhotoSrc}
                       alt={fullName}
                       className="patient-photo-circle-img"
                     />
@@ -590,4 +641,3 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
     </div>
   );
 };
-

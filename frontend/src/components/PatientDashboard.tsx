@@ -16,7 +16,7 @@ import {
   HealthAnalysis,
 } from "../types";
 import { useAuth } from "../context/AuthContext";
-import { PatientProfilePhoto } from "./PatientProfilePhoto";
+import { PatientProfilePhoto, resolvePhotoUrl } from "./PatientProfilePhoto";
 import { CentralizedPatientProfile } from "./CentralizedPatientProfile";
 import {
   HeartPulse,
@@ -1903,7 +1903,7 @@ export function PatientDashboard() {
                   <div className="id-card-photo-box">
                     {profile?.photo_url ? (
                       <img
-                        src={profile.photo_url}
+                        src={resolvePhotoUrl(profile.photo_url)}
                         alt={profile.full_name}
                         className="id-photo-img"
                       />
