@@ -5134,3 +5134,247 @@ input[type="radio"] { accent-color: var(--xora-pink); }
   scrollbar-width: none;
 }
 
+/* -------------------------------------------------------------
+   DIRECT LOGIN BOX: INTEGRATED HOSPITAL SEARCH & FACILITY SELECTION
+   ------------------------------------------------------------- */
+.hospital-search-form-group {
+  position: relative;
+  margin-bottom: 2px;
+}
+
+.clear-facility-btn {
+  background: none;
+  border: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #EA0170;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.2s;
+}
+.clear-facility-btn:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+.selected-hospital-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.selected-hospital-card:hover {
+  border-color: #001C68;
+  background: #f1f5f9;
+  box-shadow: 0 4px 12px rgba(0, 28, 104, 0.08);
+}
+
+.selected-hospital-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.selected-hospital-card .hospital-code-badge {
+  background: #001C68;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  font-family: monospace;
+}
+
+.hospital-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.hospital-text strong {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #001C68;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hospital-loc {
+  font-size: 11.5px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.search-switch-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: #ffffff;
+  color: #001C68;
+  border: 1.5px solid #001C68;
+  border-radius: 7px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.search-switch-btn:hover {
+  background: #001C68;
+  color: #ffffff;
+}
+
+.hospital-search-input-box {
+  position: relative;
+}
+
+.form-input.with-right-icon {
+  padding-right: 38px;
+}
+
+.clear-search-x-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.clear-search-x-btn:hover {
+  color: #0f172a;
+}
+
+.hospital-search-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #ffffff;
+  border: 1.5px solid #001C68;
+  border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(0, 28, 104, 0.18);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.dropdown-title-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #001C68;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.dropdown-empty-state {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #64748b;
+}
+.dropdown-empty-state small {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.dropdown-scroll-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.hospital-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.hospital-dropdown-item:last-child {
+  border-bottom: none;
+}
+.hospital-dropdown-item:hover {
+  background: #f8fafc;
+}
+.hospital-dropdown-item.active {
+  background: #eff6ff;
+  border-left: 3px solid #001C68;
+}
+
+.item-code-chip {
+  background: #e2e8f0;
+  color: #001C68;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.hospital-dropdown-item.active .item-code-chip {
+  background: #001C68;
+  color: #ffffff;
+}
+
+.item-body {
+  flex: 1;
+  min-width: 0;
+}
+.item-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.item-loc {
+  font-size: 11px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.item-selected-check {
+  color: #EA0170;
+  flex-shrink: 0;
+}
+.item-select-hint {
+  font-size: 11px;
+  font-weight: 700;
+  color: #001C68;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.hospital-dropdown-item:hover .item-select-hint {
+  opacity: 1;
+}
+
