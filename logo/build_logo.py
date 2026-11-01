@@ -142,7 +142,6 @@ tech_x = x_left + (word_w - TECH_W) / 2.0
 tech_y = tech_baseline
 
 svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">
-  <rect width="{W}" height="{H}" fill="#FFFFFF"/>
   <g fill="{PINK}">
     <path d="{poly_d(x_poly_swoosh)}"/>
     <path d="{poly_d(x_poly_counter)}"/>
