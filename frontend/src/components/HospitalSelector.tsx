@@ -59,9 +59,24 @@ export function HospitalSelector({ onHospitalSelected }: HospitalSelectorProps) 
     onHospitalSelected(activeChoice);
   };
 
+  const handleCardClick = (h: Hospital) => {
+    if (activeChoice?.code === h.code) {
+      handleContinue();
+    } else {
+      setActiveChoice(h);
+    }
+  };
+
   return (
     <div className="hospital-selector-container">
       <div className="selector-header">
+        <div className="selector-brand-logo-wrapper">
+          <img
+            src="/xora_logo.png"
+            alt="XORA Technologies"
+            className="selector-brand-logo"
+          />
+        </div>
         <div className="badge-pill secure-badge">
           <ShieldCheck size={14} /> Multi-Hospital Unified Access
         </div>
@@ -117,11 +132,12 @@ export function HospitalSelector({ onHospitalSelected }: HospitalSelectorProps) 
             return (
               <div
                 key={h.code}
-                onClick={() => setActiveChoice(h)}
+                onClick={() => handleCardClick(h)}
+                onDoubleClick={() => handleContinue()}
                 className={`hospital-card ${isSelected ? "selected" : ""} ${!h.is_active ? "inactive" : ""}`}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setActiveChoice(h)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleCardClick(h)}
               >
                 <div className="hospital-card-header">
                   <div className="hospital-avatar">
@@ -143,10 +159,10 @@ export function HospitalSelector({ onHospitalSelected }: HospitalSelectorProps) 
                 <div className="selection-indicator">
                   {isSelected ? (
                     <span className="selected-tag">
-                      <CheckCircle2 size={16} /> Selected
+                      <CheckCircle2 size={16} /> Selected &bull; Continue <ChevronRight size={14} />
                     </span>
                   ) : (
-                    <span className="select-prompt">Click to select</span>
+                    <span className="select-prompt">Click to select facility &rarr;</span>
                   )}
                 </div>
               </div>
@@ -166,7 +182,7 @@ export function HospitalSelector({ onHospitalSelected }: HospitalSelectorProps) 
             </span>
           </div>
           <button className="btn-primary continue-btn" onClick={handleContinue} type="button">
-            Continue to Portals <ChevronRight size={18} />
+            Continue to Sign In Portals <ChevronRight size={18} />
           </button>
         </div>
       )}

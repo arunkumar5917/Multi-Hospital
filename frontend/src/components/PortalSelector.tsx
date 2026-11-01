@@ -20,6 +20,15 @@ export function PortalSelector({ hospital, onChangeHospital }: PortalSelectorPro
 
   return (
     <div className="portal-selector-container">
+      {/* Centered Brand Logo */}
+      <div className="portal-brand-logo-wrapper">
+        <img
+          src="/xora_logo.png"
+          alt="XORA Technologies"
+          className="selector-brand-logo"
+        />
+      </div>
+
       {/* Current Hospital Banner */}
       <div className="active-hospital-banner">
         <div className="banner-left">
@@ -45,8 +54,11 @@ export function PortalSelector({ hospital, onChangeHospital }: PortalSelectorPro
       </div>
 
       <div className="portal-intro">
+        <div className="badge-pill secure-badge">
+          <Shield size={14} /> Multi-Hospital Unified Access
+        </div>
         <h2>Choose Your Sign In Portal</h2>
-        <p>Access your authorized hospital workspace with verified credentials.</p>
+        <p>Access your authorized hospital workspace with verified credentials at <strong>{hospital.name}</strong>.</p>
       </div>
 
       <div className="portal-cards-grid">

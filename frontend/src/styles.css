@@ -141,10 +141,14 @@ a:hover {
   font-weight: 600;
 }
 .brand-xora-mark {
-  height: 40px;
+  height: 48px;
   width: auto;
   object-fit: contain;
   display: block;
+  transition: transform 0.2s ease;
+}
+.brand-xora-mark:hover {
+  transform: scale(1.02);
 }
 .brand-xora-side {
   height: 44px;
@@ -250,6 +254,27 @@ a:hover {
   border: 1px solid var(--slate-200);
   box-shadow: var(--shadow-xl);
   padding: 44px 48px;
+}
+
+.selector-brand-logo-wrapper,
+.portal-brand-logo-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.selector-brand-logo {
+  height: 64px;
+  width: auto;
+  max-width: 320px;
+  object-fit: contain;
+  display: block;
+  transition: transform 0.25s ease, filter 0.25s ease;
+}
+
+.selector-brand-logo:hover {
+  transform: scale(1.03);
 }
 
 .selector-header {
