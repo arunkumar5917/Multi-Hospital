@@ -332,3 +332,4 @@ export function AccountActivation() {
     </div>
   );
 }
+

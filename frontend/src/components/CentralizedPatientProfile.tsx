@@ -252,14 +252,28 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
     try {
       // 1. Profile
       let profData: PatientProfile | null = null;
-      const profRes = await apiFetch(`/api/v1/patients/${grn}/profile`);
-      if (profRes.ok) {
-        profData = await profRes.json();
-      } else {
-        const altRes = await apiFetch(`/api/v1/patients/${grn}`);
-        if (altRes.ok) profData = await altRes.json();
+      try {
+        const profRes = await apiFetch(`/api/v1/patients/${grn}/profile`);
+        if (profRes.ok) {
+          profData = await profRes.json();
+        }
+      } catch (e) {
+        console.warn("Primary profile fetch failed:", e);
       }
-      if (!profData) throw new Error("Failed to load patient profile");
+
+      if (!profData) {
+        try {
+          const altRes = await apiFetch(`/api/v1/patients/${grn}`);
+          if (altRes.ok) profData = await altRes.json();
+        } catch (e) {
+          console.warn("Fallback patient fetch failed:", e);
+        }
+      }
+
+      if (!profData) {
+        throw new Error(`Patient record (${grn}) could not be retrieved from the central network database.`);
+      }
+
       setProfile(profData);
       const nameParts = (profData.full_name || "").split(" ");
       setBiodataForm({
@@ -280,94 +294,130 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
         insurance_valid_till: profData.insurance_valid_till ? String(profData.insurance_valid_till).slice(0, 10) : "",
       });
 
-      // 2. Medical History & Timeline
-      const histRes = await apiFetch(`/api/v1/patients/${grn}/medical-history`);
-      if (histRes.ok) {
-        const histData = await histRes.json();
-        setTreatments(histData.treatments || []);
-        setTimeline(histData.timeline || []);
+      // 2. Fetch all sub-resources safely in parallel
+      const [
+        histRes,
+        trtRes,
+        timelineRes,
+        healthRes,
+        attachRes,
+        rxRes,
+        medRecRes,
+        labOrdersRes,
+        surgRes,
+        ecRes,
+        fcRes,
+        visitsRes,
+        consentRes,
+        logsRes,
+        deptRes,
+      ] = await Promise.allSettled([
+        apiFetch(`/api/v1/patients/${grn}/medical-history`),
+        apiFetch(`/api/v1/patients/${grn}/treatments`),
+        apiFetch(`/api/v1/patients/${grn}/medical-history/timeline`),
+        apiFetch(`/api/v1/patients/${grn}/health-analysis`),
+        apiFetch(`/api/v1/patients/${grn}/attachments`),
+        apiFetch(`/api/v1/patients/${grn}/prescriptions`),
+        apiFetch(`/api/v1/patients/${grn}/medication-records`),
+        apiFetch(`/api/v1/patients/${grn}/lab-orders`),
+        apiFetch(`/api/v1/patients/${grn}/surgeries`),
+        apiFetch(`/api/v1/patients/${grn}/emergency-contacts`),
+        apiFetch(`/api/v1/patients/${grn}/family-contacts`),
+        apiFetch(`/api/v1/patients/${grn}/hospital-visits`),
+        apiFetch(`/api/v1/patients/${grn}/consents`),
+        apiFetch(`/api/v1/patients/${grn}/access-logs`),
+        apiFetch(`/api/v1/departments`),
+      ]);
 
-        // Active treatment
-        const activeTrt = (histData.treatments || []).find(
-          (t: Treatment) => t.status.toLowerCase() === "active" || t.status.toLowerCase() === "under treatment"
-        ) || histData.treatments?.[0] || null;
-        setActiveTreatment(activeTrt);
+      // Process treatments
+      let loadedTreatments: Treatment[] = [];
+      if (trtRes.status === "fulfilled" && trtRes.value.ok) {
+        try { loadedTreatments = await trtRes.value.json(); } catch {}
+      } else if (histRes.status === "fulfilled" && histRes.value.ok) {
+        try {
+          const histData = await histRes.value.json();
+          loadedTreatments = histData.treatments || [];
+        } catch {}
+      }
+      setTreatments(loadedTreatments);
 
-        if (activeTrt) {
-          fetchTreatmentDetails(activeTrt.id);
-        }
+      // Active treatment
+      const activeTrt = loadedTreatments.find(
+        (t: Treatment) => t.status.toLowerCase() === "active" || t.status.toLowerCase() === "under treatment"
+      ) || loadedTreatments[0] || null;
+      setActiveTreatment(activeTrt);
+      if (activeTrt) {
+        fetchTreatmentDetails(activeTrt.id);
       }
 
-      // 3. Health Analysis
-      const healthRes = await apiFetch(`/api/v1/patients/${grn}/health-analysis`);
-      if (healthRes.ok) {
-        setHealthAnalysis(await healthRes.json());
+      // Process timeline
+      if (timelineRes.status === "fulfilled" && timelineRes.value.ok) {
+        try { setTimeline(await timelineRes.value.json()); } catch {}
       }
 
-      // 4. Attachments / Documents
-      const attachRes = await apiFetch(`/api/v1/patients/${grn}/attachments`);
-      if (attachRes.ok) {
-        setAttachments(await attachRes.json());
+      // Process Health Analysis
+      if (healthRes.status === "fulfilled" && healthRes.value.ok) {
+        try { setHealthAnalysis(await healthRes.value.json()); } catch {}
       }
 
-      // 5. Prescriptions
-      const rxRes = await apiFetch(`/api/v1/patients/${grn}/prescriptions`);
-      if (rxRes.ok) {
-        setPrescriptions(await rxRes.json());
+      // Process Attachments / Documents
+      if (attachRes.status === "fulfilled" && attachRes.value.ok) {
+        try { setAttachments(await attachRes.value.json()); } catch {}
       }
 
-      // 6. Medication records
-      const medRecRes = await apiFetch(`/api/v1/patients/${grn}/medication-records`);
-      if (medRecRes.ok) {
-        setMedicationRecords(await medRecRes.json());
+      // Process Prescriptions
+      if (rxRes.status === "fulfilled" && rxRes.value.ok) {
+        try { setPrescriptions(await rxRes.value.json()); } catch {}
       }
 
-      // 7. Lab test orders
-      const labOrdersRes = await apiFetch(`/api/v1/patients/${grn}/lab-orders`);
-      if (labOrdersRes.ok) {
-        setLabOrders(await labOrdersRes.json());
+      // Process Medication Records
+      if (medRecRes.status === "fulfilled" && medRecRes.value.ok) {
+        try { setMedicationRecords(await medRecRes.value.json()); } catch {}
       }
 
-      // 8. Surgeries
-      const surgRes = await apiFetch(`/api/v1/patients/${grn}/surgeries`);
-      if (surgRes.ok) {
-        setSurgeries(await surgRes.json());
+      // Process Lab Orders
+      if (labOrdersRes.status === "fulfilled" && labOrdersRes.value.ok) {
+        try { setLabOrders(await labOrdersRes.value.json()); } catch {}
       }
 
-      // 9. Emergency contacts & family contacts
-      const ecRes = await apiFetch(`/api/v1/patients/${grn}/emergency-contacts`);
-      if (ecRes.ok) {
-        setEmergencyContacts(await ecRes.json());
-      }
-      const fcRes = await apiFetch(`/api/v1/patients/${grn}/family-contacts`);
-      if (fcRes.ok) {
-        setFamilyContacts(await fcRes.json());
+      // Process Surgeries
+      if (surgRes.status === "fulfilled" && surgRes.value.ok) {
+        try { setSurgeries(await surgRes.value.json()); } catch {}
       }
 
-      // 10. Multi-Hospital Visits
-      const visitsRes = await apiFetch(`/api/v1/patients/${grn}/hospital-visits`);
-      if (visitsRes.ok) {
-        setHospitalVisits(await visitsRes.json());
+      // Process Emergency Contacts
+      if (ecRes.status === "fulfilled" && ecRes.value.ok) {
+        try { setEmergencyContacts(await ecRes.value.json()); } catch {}
       }
 
-      // 11. Consents & Access Logs
-      const consentRes = await apiFetch(`/api/v1/patients/${grn}/consents`);
-      if (consentRes.ok) {
-        setConsents(await consentRes.json());
-      }
-      const logsRes = await apiFetch(`/api/v1/patients/${grn}/access-logs`);
-      if (logsRes.ok) {
-        const logs: MedicalAccessLog[] = await logsRes.json();
-        setAccessLogs(logs);
-        // Check if there was an active break-glass in the last 24h
-        const bgLog = logs.find((l) => (l as any).is_break_glass);
-        if (bgLog) setBreakGlassActive(true);
+      // Process Family Contacts
+      if (fcRes.status === "fulfilled" && fcRes.value.ok) {
+        try { setFamilyContacts(await fcRes.value.json()); } catch {}
       }
 
-      // 12. Departments
-      const deptRes = await apiFetch("/api/v1/departments");
-      if (deptRes.ok) {
-        setDepartments(await deptRes.json());
+      // Process Hospital Visits
+      if (visitsRes.status === "fulfilled" && visitsRes.value.ok) {
+        try { setHospitalVisits(await visitsRes.value.json()); } catch {}
+      }
+
+      // Process Consents
+      if (consentRes.status === "fulfilled" && consentRes.value.ok) {
+        try { setConsents(await consentRes.value.json()); } catch {}
+      }
+
+      // Process Access Logs
+      if (logsRes.status === "fulfilled" && logsRes.value.ok) {
+        try {
+          const logs: MedicalAccessLog[] = await logsRes.value.json();
+          setAccessLogs(logs);
+          const bgLog = logs.find((l) => (l as any).is_break_glass);
+          if (bgLog) setBreakGlassActive(true);
+        } catch {}
+      }
+
+      // Process Departments
+      if (deptRes.status === "fulfilled" && deptRes.value.ok) {
+        try { setDepartments(await deptRes.value.json()); } catch {}
       }
     } catch (err: any) {
       console.error("Error fetching patient details:", err);

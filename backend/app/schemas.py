@@ -264,15 +264,16 @@ class PrescriptionOut(PrescriptionItem):
 class AttachmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    attachment_code: str
-    treatment_id: int
+    attachment_code: str | None = None
+    document_code: str | None = None
+    treatment_id: int | None = None
     patient_grn: str
     hospital_id: str
     original_filename: str
     file_type: str
     file_category: str
     file_size: int
-    description: str
+    description: str | None = None
     upload_date: datetime
     download_url: str
 

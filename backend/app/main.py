@@ -2538,21 +2538,22 @@ def get_patient_documents(grn: str, db: Session = Depends(get_db), user: User = 
 
     docs = db.query(MedicalDocument).filter(MedicalDocument.global_patient_id == gp.id, MedicalDocument.is_active.is_(True)).order_by(MedicalDocument.upload_date.desc()).all()
     results = [
-        MedicalDocumentOut(
-            id=d.id,
-            document_code=d.document_code,
-            treatment_id=d.treatment_id,
-            patient_grn=d.patient_grn,
-            hospital_id=d.hospital_id,
-            document_name=d.document_name,
-            original_filename=d.original_filename,
-            file_type=d.file_type,
-            file_category=d.file_category,
-            file_size=d.file_size,
-            description=d.description,
-            upload_date=d.upload_date,
-            download_url=f"/api/v1/documents/{d.id}"
-        )
+        {
+            "id": d.id,
+            "document_code": d.document_code,
+            "attachment_code": d.document_code,
+            "treatment_id": d.treatment_id,
+            "patient_grn": d.patient_grn,
+            "hospital_id": d.hospital_id,
+            "document_name": d.document_name,
+            "original_filename": d.original_filename,
+            "file_type": d.file_type,
+            "file_category": d.file_category,
+            "file_size": d.file_size,
+            "description": d.description or "",
+            "upload_date": d.upload_date,
+            "download_url": f"/api/v1/documents/{d.id}"
+        }
         for d in docs
     ]
     return results
@@ -2801,6 +2802,8 @@ def get_medical_history(grn: str, db: Session = Depends(get_db), user: User = De
     history_items = db.query(MedicalHistory).filter(MedicalHistory.global_patient_id == gp.id).order_by(MedicalHistory.diagnosed_date.desc()).all()
     conditions = db.query(MedicalCondition).filter(MedicalCondition.global_patient_id == gp.id).order_by(MedicalCondition.diagnosed_date.desc()).all()
     allergies = db.query(PatientAllergy).filter(PatientAllergy.global_patient_id == gp.id).order_by(PatientAllergy.identified_date.desc()).all()
+    treatments = db.query(Treatment).filter(Treatment.global_patient_id == gp.id).order_by(Treatment.visit_date.desc()).all()
+    treatments_out = [build_treatment_out(t, db) for t in treatments]
 
     return {
         "grn": gp.grn,
@@ -2808,7 +2811,8 @@ def get_medical_history(grn: str, db: Session = Depends(get_db), user: User = De
         "blood_group": gp.blood_group,
         "conditions": conditions,
         "allergies": allergies,
-        "history_entries": history_items
+        "history_entries": history_items,
+        "treatments": treatments_out
     }
 
 @app.post("/api/v1/patients/{grn}/medical-history", response_model=MedicalHistoryOut, status_code=201)

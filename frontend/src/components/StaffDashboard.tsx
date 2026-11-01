@@ -305,7 +305,7 @@ export function StaffDashboard() {
     setPatientModalActiveTab("personal");
     setError("");
     try {
-      const [profRes, histRes, timeRes, trtRes, attRes, docsRes, anRes, famRes] = await Promise.all([
+      const results = await Promise.allSettled([
         apiFetch(`/api/v1/patients/${patient.grn}/profile`),
         apiFetch(`/api/v1/patients/${patient.grn}/medical-history`),
         apiFetch(`/api/v1/patients/${patient.grn}/medical-history/timeline`),
@@ -316,14 +316,40 @@ export function StaffDashboard() {
         apiFetch(`/api/v1/patients/${patient.grn}/family-contacts`),
       ]);
 
-      const profData: PatientProfile = profRes.ok ? await profRes.json() : null;
-      const histData = histRes.ok ? await histRes.json() : {};
-      const timeData = timeRes.ok ? await timeRes.json() : [];
-      const trtData: Treatment[] = trtRes.ok ? await trtRes.json() : [];
-      const attData = attRes.ok ? await attRes.json() : [];
-      const docsData: MedicalDocument[] = docsRes.ok ? await docsRes.json() : [];
-      const anData: HealthAnalysis = anRes.ok ? await anRes.json() : null;
-      const famData: FamilyContact[] = famRes.ok ? await famRes.json() : [];
+      const [profRes, histRes, timeRes, trtRes, attRes, docsRes, anRes, famRes] = results.map(r => r.status === "fulfilled" ? r.value : null);
+
+      let profData: PatientProfile | null = null;
+      if (profRes && profRes.ok) {
+        try { profData = await profRes.json(); } catch {}
+      }
+      let histData: any = {};
+      if (histRes && histRes.ok) {
+        try { histData = await histRes.json(); } catch {}
+      }
+      let timeData: any[] = [];
+      if (timeRes && timeRes.ok) {
+        try { timeData = await timeRes.json(); } catch {}
+      }
+      let trtData: Treatment[] = [];
+      if (trtRes && trtRes.ok) {
+        try { trtData = await trtRes.json(); } catch {}
+      }
+      let attData: any[] = [];
+      if (attRes && attRes.ok) {
+        try { attData = await attRes.json(); } catch {}
+      }
+      let docsData: MedicalDocument[] = [];
+      if (docsRes && docsRes.ok) {
+        try { docsData = await docsRes.json(); } catch {}
+      }
+      let anData: HealthAnalysis | null = null;
+      if (anRes && anRes.ok) {
+        try { anData = await anRes.json(); } catch {}
+      }
+      let famData: FamilyContact[] = [];
+      if (famRes && famRes.ok) {
+        try { famData = await famRes.json(); } catch {}
+      }
 
       setSelectedPatientProfile(profData);
       setSelectedPatientAnalysis(anData);
