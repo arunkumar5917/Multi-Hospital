@@ -5,6 +5,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { SuperAdminDashboard } from "./components/SuperAdminDashboard";
 import { PatientDashboard } from "./components/PatientDashboard";
 import { StaffDashboard } from "./components/StaffDashboard";
+import { AccountActivation } from "./components/AccountActivation";
 import { ShieldCheck } from "lucide-react";
 
 function PublicHome() {
@@ -98,6 +99,7 @@ export default function App() {
         <Route path="/hospital-admin/login" element={<HospitalAdminLoginPage />} />
         <Route path="/login" element={<GeneralLoginPage />} />
         <Route path="/super-admin/login" element={<SuperAdminLoginPage />} />
+        <Route path="/activate" element={<AccountActivation />} />
 
         {/* Protected Role-Based Dashboards */}
         <Route
@@ -135,7 +137,7 @@ export default function App() {
         <Route
           path="/staff/dashboard"
           element={
-            <ProtectedRoute allowedRoles={["nurse", "super_admin"]}>
+            <ProtectedRoute allowedRoles={["nurse", "receptionist", "other_staff", "billing_staff", "super_admin"]}>
               <StaffDashboard />
             </ProtectedRoute>
           }

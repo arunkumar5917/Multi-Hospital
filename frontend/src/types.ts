@@ -8,6 +8,7 @@ export interface Hospital {
   email?: string | null;
   logo_url?: string | null;
   is_active: boolean;
+  approval_status?: "approved" | "pending" | "rejected";
   created_at?: string;
 }
 
@@ -17,6 +18,10 @@ export interface User {
   full_name: string;
   role: string;
   hospital_id?: string | null;
+  employee_id?: string | null;
+  department?: string | null;
+  is_verified?: boolean;
+  is_active?: boolean;
   grn?: string | null;
 }
 
@@ -461,3 +466,49 @@ export interface BreakGlassResponse {
   granted_at: string;
   expires_in_hours: number;
 }
+
+export interface StaffMember {
+  id: number;
+  employee_id?: string | null;
+  email: string;
+  full_name: string;
+  role: string;
+  department?: string | null;
+  hospital_code?: string | null;
+  phone?: string | null;
+  is_active: boolean;
+  is_verified: boolean;
+  created_at: string;
+}
+
+export interface HospitalDepartment {
+  id: number;
+  hospital_id: string;
+  name: string;
+  code: string;
+  head_of_department?: string | null;
+  description?: string | null;
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface RolePermission {
+  role: string;
+  display_name: string;
+  description: string;
+  permissions: string[];
+}
+
+export interface StaffInvitation {
+  success: boolean;
+  token: string;
+  invitation_link: string;
+  email: string;
+  full_name: string;
+  role: string;
+  hospital_code: string;
+  hospital_name: string;
+  department?: string | null;
+  expires_in: string;
+}
+

@@ -2,6 +2,7 @@ import os
 import io
 import shutil
 import uuid
+import secrets
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from dotenv import load_dotenv
@@ -53,7 +54,10 @@ from .schemas import (
     PatientSurgeryCreate, PatientSurgeryOut,
     EmergencyContactCreate, EmergencyContactOut,
     BreakGlassAccessRequest, BreakGlassAccessOut,
-    HospitalVisitSummaryOut
+    HospitalVisitSummaryOut,
+    HospitalStatusUpdate, HospitalAdminCreate, StaffCreateRequest, StaffOut, StaffUpdateRequest,
+    InvitationCreateRequest, InvitationVerifyOut, InvitationActivateRequest,
+    RolePermissionOut, DepartmentUpdate, UserUpdate, UserStatusUpdate
 )
 from .security import (
     hash_password, verify_password, create_access_token, create_refresh_token,
@@ -73,6 +77,11 @@ def ensure_schema_columns():
             "ALTER TABLE medical_record_access_logs ADD COLUMN break_glass_reason TEXT",
             "ALTER TABLE medical_record_access_logs ADD COLUMN user_name VARCHAR(160)",
             "ALTER TABLE medical_record_access_logs ADD COLUMN user_role VARCHAR(60)",
+            "ALTER TABLE hospitals ADD COLUMN approval_status VARCHAR(30) DEFAULT 'approved'",
+            "ALTER TABLE users ADD COLUMN employee_id VARCHAR(60)",
+            "ALTER TABLE users ADD COLUMN department VARCHAR(120)",
+            "ALTER TABLE users ADD COLUMN invitation_token VARCHAR(120)",
+            "ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 1",
         ]
         for stmt in statements:
             try:
@@ -118,13 +127,15 @@ DASHBOARDS = {
     "lab_technician": "/lab/dashboard",
     "pharmacist": "/pharmacy/dashboard",
     "billing_staff": "/billing/dashboard",
+    "receptionist": "/staff/dashboard",
+    "other_staff": "/staff/dashboard",
 }
 
 PORTAL_ROLES = {
     "super_admin": {"super_admin"},
     "hospital_admin": {"hospital_admin"},
-    "general": {"doctor", "nurse", "lab_technician", "pharmacist", "billing_staff", "patient"},
-    "staff": {"doctor", "nurse", "lab_technician", "pharmacist", "billing_staff"},
+    "general": {"doctor", "nurse", "lab_technician", "pharmacist", "billing_staff", "receptionist", "other_staff", "patient"},
+    "staff": {"doctor", "nurse", "lab_technician", "pharmacist", "billing_staff", "receptionist", "other_staff"},
     "patient": {"patient"},
 }
 
@@ -1107,6 +1118,101 @@ def update_hospital(
     log_audit(db, "HOSPITAL_UPDATED", user_id=admin.id, hospital_code=hospital.code,
               ip_address=get_client_ip(request), details=f"Updated hospital {hospital.code}")
     return hospital
+
+@app.get("/api/v1/hospitals/{hospital_id}", response_model=HospitalOut)
+def get_hospital_by_id(hospital_id: str, db: Session = Depends(get_db)):
+    hosp = None
+    if hospital_id.isdigit():
+        hosp = db.query(Hospital).filter(Hospital.id == int(hospital_id)).first()
+    if not hosp:
+        hosp = db.query(Hospital).filter(Hospital.code == hospital_id.upper().strip()).first()
+    if not hosp:
+        raise HTTPException(status_code=404, detail=f"Hospital '{hospital_id}' not found.")
+    return hosp
+
+@app.patch("/api/v1/hospitals/{hospital_id}/status", response_model=HospitalOut)
+def update_hospital_status(
+    hospital_id: str,
+    payload: HospitalStatusUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin")),
+    request: Request = None
+):
+    hosp = None
+    if hospital_id.isdigit():
+        hosp = db.query(Hospital).filter(Hospital.id == int(hospital_id)).first()
+    if not hosp:
+        hosp = db.query(Hospital).filter(Hospital.code == hospital_id.upper().strip()).first()
+    if not hosp:
+        raise HTTPException(status_code=404, detail="Hospital not found.")
+
+    if payload.approval_status is not None:
+        hosp.approval_status = payload.approval_status.lower().strip()
+    if payload.is_active is not None:
+        hosp.is_active = payload.is_active
+
+    db.commit()
+    db.refresh(hosp)
+
+    # When approved and active, automatically share all patient profiles
+    if hosp.approval_status == "approved" and hosp.is_active:
+        sync_all_patients_to_all_hospitals(db, target_hospital_id=hosp.id)
+
+    log_audit(
+        db, "HOSPITAL_STATUS_CHANGED", user_id=admin.id, hospital_code=hosp.code,
+        ip_address=get_client_ip(request),
+        details=f"Updated status of hospital {hosp.code}: approval={hosp.approval_status}, active={hosp.is_active}. Reason: {payload.reason or 'Admin update'}"
+    )
+    return hosp
+
+@app.post("/api/v1/hospitals/{hospital_id}/admin", response_model=UserOut, status_code=201)
+def create_hospital_admin_account(
+    hospital_id: str,
+    payload: HospitalAdminCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin")),
+    request: Request = None
+):
+    hosp = None
+    if hospital_id.isdigit():
+        hosp = db.query(Hospital).filter(Hospital.id == int(hospital_id)).first()
+    if not hosp:
+        hosp = db.query(Hospital).filter(Hospital.code == hospital_id.upper().strip()).first()
+    if not hosp:
+        raise HTTPException(status_code=404, detail="Hospital not found.")
+
+    email_clean = payload.email.strip().lower()
+    existing = db.query(User).filter(User.email == email_clean).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"User with email '{email_clean}' already exists.")
+
+    pwd = payload.password or "ChangeMe123!"
+    user = User(
+        email=email_clean,
+        full_name=payload.full_name.strip(),
+        role="hospital_admin",
+        password_hash=hash_password(pwd),
+        hospital_id=hosp.code,
+        phone=payload.phone,
+        department="Hospital Administration",
+        employee_id=f"ADM-{hosp.code}-0001",
+        is_verified=True,
+        is_active=True
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    membership = UserHospitalMembership(user_id=user.id, hospital_id=hosp.id, role="hospital_admin", is_active=True)
+    db.add(membership)
+    db.commit()
+
+    log_audit(
+        db, "HOSPITAL_ADMIN_CREATED", user_id=admin.id, hospital_code=hosp.code,
+        ip_address=get_client_ip(request),
+        details=f"Created hospital admin account '{user.email}' for hospital {hosp.code}"
+    )
+    return user
 
 @app.post("/api/v1/hospitals/{hospital_code}/sync-patients")
 def sync_hospital_patients(
@@ -3007,6 +3113,93 @@ def get_hospital_departments(hospital_id: str | None = None, db: Session = Depen
         q = q.filter(HospitalDepartment.hospital_id == hospital_id)
     return q.order_by(HospitalDepartment.name).all()
 
+@app.post("/api/v1/departments", response_model=HospitalDepartmentOut, status_code=201)
+def create_hospital_department(
+    payload: HospitalDepartmentCreate,
+    hospital_code: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("hospital_admin", "super_admin")),
+    request: Request = None
+):
+    hosp_code = (hospital_code or user.hospital_id or "HOSP-001").strip().upper()
+    dept_code = payload.code.strip().upper()
+    
+    existing = db.query(HospitalDepartment).filter(
+        HospitalDepartment.hospital_id == hosp_code,
+        HospitalDepartment.code == dept_code
+    ).first()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            existing.name = payload.name.strip()
+            existing.head_of_department = payload.head_of_department
+            existing.description = payload.description
+            db.commit()
+            db.refresh(existing)
+            return existing
+        raise HTTPException(status_code=400, detail=f"Department with code '{dept_code}' already exists in hospital '{hosp_code}'.")
+
+    dept = HospitalDepartment(
+        hospital_id=hosp_code,
+        name=payload.name.strip(),
+        code=dept_code,
+        head_of_department=payload.head_of_department,
+        description=payload.description,
+        is_active=True
+    )
+    db.add(dept)
+    db.commit()
+    db.refresh(dept)
+
+    log_audit(db, "DEPARTMENT_CREATED", user_id=user.id, hospital_code=hosp_code,
+              ip_address=get_client_ip(request), details=f"Created department {dept.name} ({dept.code}) in {hosp_code}")
+    return dept
+
+@app.patch("/api/v1/departments/{department_id}", response_model=HospitalDepartmentOut)
+def update_hospital_department(
+    department_id: int,
+    payload: DepartmentUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("hospital_admin", "super_admin")),
+    request: Request = None
+):
+    dept = db.query(HospitalDepartment).filter(HospitalDepartment.id == department_id).first()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found.")
+
+    if user.role == "hospital_admin" and user.hospital_id and dept.hospital_id != user.hospital_id:
+        raise HTTPException(status_code=403, detail="Not authorized to edit department in another hospital.")
+
+    for field, val in payload.model_dump(exclude_unset=True).items():
+        if val is not None:
+            setattr(dept, field, val)
+
+    db.commit()
+    db.refresh(dept)
+    log_audit(db, "DEPARTMENT_UPDATED", user_id=user.id, hospital_code=dept.hospital_id,
+              ip_address=get_client_ip(request), details=f"Updated department {dept.name} ({dept.code})")
+    return dept
+
+@app.delete("/api/v1/departments/{department_id}")
+def delete_hospital_department(
+    department_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("hospital_admin", "super_admin")),
+    request: Request = None
+):
+    dept = db.query(HospitalDepartment).filter(HospitalDepartment.id == department_id).first()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found.")
+
+    if user.role == "hospital_admin" and user.hospital_id and dept.hospital_id != user.hospital_id:
+        raise HTTPException(status_code=403, detail="Not authorized to deactivate department in another hospital.")
+
+    dept.is_active = False
+    db.commit()
+    log_audit(db, "DEPARTMENT_DEACTIVATED", user_id=user.id, hospital_code=dept.hospital_id,
+              ip_address=get_client_ip(request), details=f"Deactivated department {dept.name} ({dept.code})")
+    return {"message": "Department deactivated successfully", "id": department_id}
+
 @app.get("/api/v1/treatments/{treatment_id}/protocols", response_model=list[TreatmentProtocolOut])
 def get_treatment_protocols(treatment_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     return db.query(TreatmentProtocol).filter(TreatmentProtocol.treatment_id == treatment_id).order_by(desc(TreatmentProtocol.created_at)).all()
@@ -3412,3 +3605,543 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db), user: 
     inv = Invoice(**payload.model_dump(), hospital_id=hosp)
     db.add(inv); db.commit(); db.refresh(inv)
     return inv
+
+
+# ----------------- SECTION 12: Enterprise Multi-Hospital Administration & Staff Onboarding -----------------
+
+@app.get("/api/v1/roles", response_model=list[RolePermissionOut])
+def list_role_permissions():
+    return [
+        RolePermissionOut(
+            role="super_admin",
+            display_name="Super Administrator",
+            description="Full centralized access across all healthcare facilities in the network.",
+            permissions=[
+                "hospitals:manage", "hospitals:approve", "hospitals:reject", "hospital_admins:create",
+                "network:monitor", "patients:view_all", "audit:view_all", "sync:all"
+            ]
+        ),
+        RolePermissionOut(
+            role="hospital_admin",
+            display_name="Hospital Administrator",
+            description="Manages hospital operations, staff onboarding, departments, and clinical units.",
+            permissions=[
+                "hospital:manage", "staff:manage", "staff:invite", "departments:manage",
+                "patients:view", "reports:view", "appointments:view"
+            ]
+        ),
+        RolePermissionOut(
+            role="doctor",
+            display_name="Medical Doctor / Specialist",
+            description="Comprehensive clinical care, treatment protocols, prescriptions, and medical records.",
+            permissions=[
+                "patients:clinical_view", "treatments:create", "treatments:update", "protocols:create",
+                "prescriptions:write", "lab_orders:create", "vitals:view", "break_glass:request"
+            ]
+        ),
+        RolePermissionOut(
+            role="nurse",
+            display_name="Registered Staff Nurse",
+            description="Patient care, vital signs recording, nursing observations, and medication administration.",
+            permissions=[
+                "patients:care_view", "vitals:record", "nursing_notes:create",
+                "medications:administer", "treatments:view"
+            ]
+        ),
+        RolePermissionOut(
+            role="lab_technician",
+            display_name="Laboratory Specialist",
+            description="Laboratory investigations, diagnostic test execution, and official report uploads.",
+            permissions=[
+                "lab_orders:view", "lab_orders:update", "lab_reports:upload", "investigations:manage"
+            ]
+        ),
+        RolePermissionOut(
+            role="pharmacist",
+            display_name="Clinical Pharmacist",
+            description="Prescription fulfillment, medication verification, dispensing, and pharmacy inventory.",
+            permissions=[
+                "prescriptions:view", "medications:dispense", "pharmacy:inventory", "orders:verify"
+            ]
+        ),
+        RolePermissionOut(
+            role="receptionist",
+            display_name="Front Desk & Receptionist",
+            description="Patient registration, intake, OPD triage, appointments, and bed allocation.",
+            permissions=[
+                "patients:register", "patients:search", "appointments:create", "appointments:reschedule", "checkin:manage"
+            ]
+        ),
+        RolePermissionOut(
+            role="billing_staff",
+            display_name="Billing & Insurance Officer",
+            description="Hospital billing, invoice generation, payment reconciliation, and insurance claims.",
+            permissions=[
+                "invoices:create", "invoices:view", "payments:record", "insurance:claim"
+            ]
+        ),
+        RolePermissionOut(
+            role="other_staff",
+            display_name="Support & Administrative Staff",
+            description="Assigned hospital operations, department support, and clinical assistance.",
+            permissions=[
+                "tasks:view", "department:support", "tickets:manage"
+            ]
+        ),
+        RolePermissionOut(
+            role="patient",
+            display_name="Patient / Family Portal",
+            description="Personal centralized health profile, past visits, prescriptions, and consent management.",
+            permissions=[
+                "profile:view_self", "records:view_self", "appointments:book", "consents:manage", "photo:upload"
+            ]
+        ),
+    ]
+
+@app.get("/api/v1/staff", response_model=list[StaffOut])
+def list_staff(
+    hospital_code: str | None = None,
+    role: str | None = None,
+    department: str | None = None,
+    is_active: bool | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user)
+):
+    staff_roles = ["doctor", "nurse", "lab_technician", "pharmacist", "receptionist", "billing_staff", "hospital_admin", "other_staff"]
+    q = db.query(User).filter(User.role.in_(staff_roles))
+
+    if user.role == "hospital_admin" and user.hospital_id:
+        target_hosp = hospital_code.upper().strip() if (hospital_code and user.role == "super_admin") else user.hospital_id
+        q = q.filter(User.hospital_id == target_hosp)
+    elif hospital_code:
+        q = q.filter(User.hospital_id == hospital_code.upper().strip())
+
+    if role:
+        q = q.filter(User.role == role.lower().strip())
+    if department:
+        q = q.filter(User.department.ilike(f"%{department.strip()}%"))
+    if is_active is not None:
+        q = q.filter(User.is_active.is_(is_active))
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(or_(User.full_name.ilike(s), User.email.ilike(s), User.employee_id.ilike(s)))
+
+    users = q.order_by(User.full_name.asc()).all()
+    res = []
+    for u in users:
+        res.append(StaffOut(
+            id=u.id,
+            employee_id=u.employee_id,
+            email=u.email,
+            full_name=u.full_name,
+            role=u.role,
+            department=u.department,
+            hospital_code=u.hospital_id,
+            phone=u.phone,
+            is_active=u.is_active,
+            is_verified=u.is_verified,
+            created_at=u.created_at
+        ))
+    return res
+
+@app.post("/api/v1/staff", response_model=StaffOut, status_code=201)
+def create_staff(
+    payload: StaffCreateRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin")),
+    request: Request = None
+):
+    hosp_code = payload.hospital_code.strip().upper()
+    if admin.role == "hospital_admin" and admin.hospital_id and hosp_code != admin.hospital_id:
+        raise HTTPException(status_code=403, detail="Hospital administrators can only onboard staff for their own hospital.")
+
+    hosp = db.query(Hospital).filter(Hospital.code == hosp_code).first()
+    if not hosp:
+        raise HTTPException(status_code=404, detail=f"Hospital '{hosp_code}' not found.")
+
+    email_clean = payload.email.strip().lower()
+    existing = db.query(User).filter(User.email == email_clean).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"User with email '{email_clean}' already exists.")
+
+    emp_id = payload.employee_id
+    if not emp_id:
+        existing_count = db.query(User).filter(User.hospital_id == hosp_code).count()
+        emp_id = f"EMP-{hosp_code}-{existing_count + 1:04d}"
+
+    invitation_token = None
+    if payload.password:
+        pwd_hash = hash_password(payload.password)
+        is_verified = True
+    else:
+        invitation_token = secrets.token_urlsafe(32)
+        pwd_hash = hash_password(secrets.token_urlsafe(16))
+        is_verified = False
+
+    user = User(
+        email=email_clean,
+        full_name=payload.full_name.strip(),
+        role=payload.role.lower().strip(),
+        password_hash=pwd_hash,
+        hospital_id=hosp_code,
+        employee_id=emp_id,
+        department=payload.department,
+        phone=payload.phone,
+        invitation_token=invitation_token,
+        is_verified=is_verified,
+        is_active=True
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    membership = UserHospitalMembership(
+        user_id=user.id,
+        hospital_id=hosp.id,
+        role=user.role,
+        is_active=True
+    )
+    db.add(membership)
+    db.commit()
+
+    log_audit(
+        db, "STAFF_ONBOARDED", user_id=admin.id, hospital_code=hosp_code,
+        ip_address=get_client_ip(request),
+        details=f"Onboarded staff {user.full_name} ({user.role}, {user.employee_id}) at {hosp_code}"
+    )
+
+    return StaffOut(
+        id=user.id,
+        employee_id=user.employee_id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        department=user.department,
+        hospital_code=user.hospital_id,
+        phone=user.phone,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        created_at=user.created_at
+    )
+
+@app.get("/api/v1/staff/{staff_id}", response_model=StaffOut)
+def get_staff_by_id(staff_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    staff = db.query(User).filter(User.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff member not found.")
+    return StaffOut(
+        id=staff.id,
+        employee_id=staff.employee_id,
+        email=staff.email,
+        full_name=staff.full_name,
+        role=staff.role,
+        department=staff.department,
+        hospital_code=staff.hospital_id,
+        phone=staff.phone,
+        is_active=staff.is_active,
+        is_verified=staff.is_verified,
+        created_at=staff.created_at
+    )
+
+@app.patch("/api/v1/staff/{staff_id}", response_model=StaffOut)
+def update_staff(
+    staff_id: int,
+    payload: StaffUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin")),
+    request: Request = None
+):
+    staff = db.query(User).filter(User.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff member not found.")
+
+    if admin.role == "hospital_admin" and admin.hospital_id and staff.hospital_id != admin.hospital_id:
+        raise HTTPException(status_code=403, detail="Not authorized to edit staff in another hospital.")
+
+    for field, val in payload.model_dump(exclude_unset=True).items():
+        if val is not None:
+            setattr(staff, field, val)
+
+    db.commit()
+    db.refresh(staff)
+
+    log_audit(
+        db, "STAFF_UPDATED", user_id=admin.id, hospital_code=staff.hospital_id,
+        ip_address=get_client_ip(request),
+        details=f"Updated staff {staff.full_name} ({staff.employee_id})"
+    )
+
+    return StaffOut(
+        id=staff.id,
+        employee_id=staff.employee_id,
+        email=staff.email,
+        full_name=staff.full_name,
+        role=staff.role,
+        department=staff.department,
+        hospital_code=staff.hospital_id,
+        phone=staff.phone,
+        is_active=staff.is_active,
+        is_verified=staff.is_verified,
+        created_at=staff.created_at
+    )
+
+@app.delete("/api/v1/staff/{staff_id}")
+def deactivate_staff(
+    staff_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin")),
+    request: Request = None
+):
+    staff = db.query(User).filter(User.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff member not found.")
+
+    if admin.role == "hospital_admin" and admin.hospital_id and staff.hospital_id != admin.hospital_id:
+        raise HTTPException(status_code=403, detail="Not authorized to deactivate staff in another hospital.")
+
+    staff.is_active = False
+    memberships = db.query(UserHospitalMembership).filter(UserHospitalMembership.user_id == staff.id).all()
+    for m in memberships:
+        m.is_active = False
+
+    db.commit()
+
+    log_audit(
+        db, "STAFF_DEACTIVATED", user_id=admin.id, hospital_code=staff.hospital_id,
+        ip_address=get_client_ip(request),
+        details=f"Deactivated staff account {staff.full_name} ({staff.employee_id})"
+    )
+
+    return {"message": "Staff member deactivated successfully", "id": staff_id}
+
+@app.post("/api/v1/invitations")
+def create_staff_invitation(
+    payload: InvitationCreateRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin")),
+    request: Request = None
+):
+    hosp_code = payload.hospital_code.strip().upper()
+    if admin.role == "hospital_admin" and admin.hospital_id and hosp_code != admin.hospital_id:
+        raise HTTPException(status_code=403, detail="Hospital administrators can only invite staff to their own hospital.")
+
+    hosp = db.query(Hospital).filter(Hospital.code == hosp_code).first()
+    if not hosp:
+        raise HTTPException(status_code=404, detail=f"Hospital '{hosp_code}' not found.")
+
+    email_clean = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == email_clean).first()
+    token = secrets.token_urlsafe(32)
+
+    if user:
+        if user.is_verified:
+            raise HTTPException(status_code=400, detail="User account is already active and verified.")
+        user.invitation_token = token
+        user.full_name = payload.full_name.strip()
+        user.role = payload.role.lower().strip()
+        user.department = payload.department
+        user.hospital_id = hosp_code
+    else:
+        existing_count = db.query(User).filter(User.hospital_id == hosp_code).count()
+        emp_id = f"EMP-{hosp_code}-{existing_count + 1:04d}"
+        user = User(
+            email=email_clean,
+            full_name=payload.full_name.strip(),
+            role=payload.role.lower().strip(),
+            password_hash=hash_password(secrets.token_urlsafe(16)),
+            hospital_id=hosp_code,
+            employee_id=emp_id,
+            department=payload.department,
+            invitation_token=token,
+            is_verified=False,
+            is_active=True
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        membership = UserHospitalMembership(
+            user_id=user.id,
+            hospital_id=hosp.id,
+            role=user.role,
+            is_active=True
+        )
+        db.add(membership)
+
+    db.commit()
+
+    log_audit(
+        db, "STAFF_INVITATION_SENT", user_id=admin.id, hospital_code=hosp_code,
+        ip_address=get_client_ip(request),
+        details=f"Sent staff invitation to {user.email} for role {user.role}"
+    )
+
+    return {
+        "success": True,
+        "token": token,
+        "invitation_link": f"/activate?token={token}",
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "hospital_code": hosp_code,
+        "hospital_name": hosp.name,
+        "department": user.department,
+        "expires_in": "7 days"
+    }
+
+@app.get("/api/v1/invitations/{token}", response_model=InvitationVerifyOut)
+def verify_invitation(token: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.invitation_token == token.strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid or expired invitation link.")
+
+    hosp = db.query(Hospital).filter(Hospital.code == user.hospital_id).first()
+    hosp_name = hosp.name if hosp else (user.hospital_id or "X7 MediCore Network")
+
+    return InvitationVerifyOut(
+        valid=True,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        hospital_code=user.hospital_id or "HOSP-001",
+        hospital_name=hosp_name,
+        department=user.department,
+        message="Invitation token is valid. You may set your new account password."
+    )
+
+@app.post("/api/v1/invitations/activate")
+def activate_invitation_account(
+    payload: InvitationActivateRequest,
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    user = db.query(User).filter(User.invitation_token == payload.token.strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid or expired activation token.")
+
+    user.password_hash = hash_password(payload.password)
+    user.invitation_token = None
+    user.is_verified = True
+    user.is_active = True
+    db.commit()
+
+    log_audit(
+        db, "ACCOUNT_ACTIVATED", user_id=user.id, hospital_code=user.hospital_id,
+        ip_address=get_client_ip(request),
+        details=f"Staff account {user.email} activated password."
+    )
+
+    return {
+        "success": True,
+        "message": "Account successfully activated! You may now sign in using your email and password.",
+        "email": user.email,
+        "role": user.role,
+        "hospital_code": user.hospital_id
+    }
+
+@app.get("/api/v1/users", response_model=list[UserOut])
+def list_users(
+    hospital_code: str | None = None,
+    role: str | None = None,
+    is_active: bool | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin"))
+):
+    q = db.query(User)
+    if admin.role == "hospital_admin" and admin.hospital_id:
+        target_hosp = hospital_code.upper().strip() if (hospital_code and admin.role == "super_admin") else admin.hospital_id
+        q = q.filter(User.hospital_id == target_hosp)
+    elif hospital_code:
+        q = q.filter(User.hospital_id == hospital_code.upper().strip())
+
+    if role:
+        q = q.filter(User.role == role.lower().strip())
+    if is_active is not None:
+        q = q.filter(User.is_active.is_(is_active))
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(or_(User.full_name.ilike(s), User.email.ilike(s)))
+
+    return q.order_by(User.id.desc()).all()
+
+@app.get("/api/v1/users/{user_id}", response_model=UserOut)
+def get_user_by_id(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_roles("super_admin", "hospital_admin"))):
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if admin.role == "hospital_admin" and admin.hospital_id and u.hospital_id != admin.hospital_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view users in another hospital.")
+    return u
+
+@app.patch("/api/v1/users/{user_id}", response_model=UserOut)
+def update_user_details(
+    user_id: int,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin")),
+    request: Request = None
+):
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if admin.role == "hospital_admin" and admin.hospital_id and u.hospital_id != admin.hospital_id:
+        raise HTTPException(status_code=403, detail="Not authorized to edit users in another hospital.")
+
+    for field, val in payload.model_dump(exclude_unset=True).items():
+        if val is not None:
+            setattr(u, field, val)
+
+    db.commit()
+    db.refresh(u)
+    log_audit(db, "USER_UPDATED", user_id=admin.id, hospital_code=u.hospital_id,
+              ip_address=get_client_ip(request), details=f"Updated user account {u.email}")
+    return u
+
+@app.patch("/api/v1/users/{user_id}/status", response_model=UserOut)
+def update_user_status(
+    user_id: int,
+    payload: UserStatusUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin")),
+    request: Request = None
+):
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if admin.role == "hospital_admin" and admin.hospital_id and u.hospital_id != admin.hospital_id:
+        raise HTTPException(status_code=403, detail="Not authorized to change user status in another hospital.")
+
+    if payload.is_active is not None:
+        u.is_active = payload.is_active
+    if payload.is_verified is not None:
+        u.is_verified = payload.is_verified
+
+    db.commit()
+    db.refresh(u)
+    log_audit(db, "USER_STATUS_CHANGED", user_id=admin.id, hospital_code=u.hospital_id,
+              ip_address=get_client_ip(request), details=f"Changed status of user {u.email} to active={u.is_active}")
+    return u
+
+@app.get("/api/v1/audit", response_model=list[AuditLogOut])
+def get_audit_logs(
+    hospital_code: str | None = None,
+    event: str | None = None,
+    limit: int = Query(default=100, le=500),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("super_admin", "hospital_admin"))
+):
+    q = db.query(AuthenticationAuditLog)
+    if user.role == "hospital_admin" and user.hospital_id:
+        q = q.filter(AuthenticationAuditLog.hospital_code == user.hospital_id)
+    elif hospital_code:
+        q = q.filter(AuthenticationAuditLog.hospital_code == hospital_code.upper().strip())
+
+    if event:
+        q = q.filter(AuthenticationAuditLog.event == event.strip())
+
+    logs = q.order_by(AuthenticationAuditLog.created_at.desc()).limit(limit).all()
+    return logs

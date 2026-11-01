@@ -16,6 +16,9 @@ class UserOut(BaseModel):
     full_name: str
     role: str
     hospital_id: str | None = None
+    employee_id: str | None = None
+    department: str | None = None
+    is_verified: bool = True
     is_active: bool
 
 class HospitalCreate(BaseModel):
@@ -27,6 +30,7 @@ class HospitalCreate(BaseModel):
     email: str | None = None
     logo_url: str | None = None
     is_active: bool = True
+    approval_status: str = "approved"
 
 class HospitalUpdate(BaseModel):
     name: str | None = None
@@ -36,10 +40,12 @@ class HospitalUpdate(BaseModel):
     email: str | None = None
     logo_url: str | None = None
     is_active: bool | None = None
+    approval_status: str | None = None
 
 class HospitalOut(HospitalCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    approval_status: str = "approved"
     created_at: datetime
 
 class LoginRequest(BaseModel):
@@ -699,4 +705,97 @@ class HospitalVisitSummaryOut(BaseModel):
     local_patient_id: str | None = None
     consent_status: str
     active_treatment_code: str | None = None
+
+# ----------------- Enterprise Multi-Hospital Modules -----------------
+class HospitalStatusUpdate(BaseModel):
+    approval_status: str | None = Field(default=None, description="approved | pending | rejected")
+    is_active: bool | None = None
+    reason: str | None = None
+
+class HospitalAdminCreate(BaseModel):
+    email: str = Field(min_length=5, max_length=255)
+    full_name: str = Field(min_length=2, max_length=160)
+    password: str | None = Field(default=None, min_length=8)
+    phone: str | None = None
+
+class StaffCreateRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=255)
+    full_name: str = Field(min_length=2, max_length=160)
+    role: str = Field(description="doctor | nurse | lab_technician | pharmacist | receptionist | billing_staff | other_staff")
+    hospital_code: str
+    department: str | None = None
+    phone: str | None = None
+    employee_id: str | None = None
+    password: str | None = Field(default=None, min_length=8)
+
+class StaffOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    employee_id: str | None = None
+    email: str
+    full_name: str
+    role: str
+    department: str | None = None
+    hospital_code: str | None = None
+    phone: str | None = None
+    is_active: bool = True
+    is_verified: bool = True
+    created_at: datetime
+
+class StaffUpdateRequest(BaseModel):
+    full_name: str | None = None
+    role: str | None = None
+    department: str | None = None
+    phone: str | None = None
+    is_active: bool | None = None
+
+class InvitationCreateRequest(BaseModel):
+    email: str
+    full_name: str
+    role: str
+    hospital_code: str
+    department: str | None = None
+
+class InvitationVerifyOut(BaseModel):
+    valid: bool
+    email: str
+    full_name: str
+    role: str
+    hospital_code: str
+    hospital_name: str
+    department: str | None = None
+    message: str | None = None
+
+class InvitationActivateRequest(BaseModel):
+    token: str = Field(min_length=8)
+    password: str = Field(min_length=8)
+
+class RolePermissionOut(BaseModel):
+    role: str
+    display_name: str
+    description: str
+    permissions: list[str]
+
+class DepartmentUpdate(BaseModel):
+    name: str | None = None
+    code: str | None = None
+    head_of_department: str | None = None
+    description: str | None = None
+    is_active: bool | None = None
+
+class UserUpdate(BaseModel):
+    full_name: str | None = None
+    role: str | None = None
+    department: str | None = None
+    phone: str | None = None
+    employee_id: str | None = None
+    hospital_id: str | None = None
+    is_active: bool | None = None
+    is_verified: bool | None = None
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool | None = None
+    is_verified: bool | None = None
+
+
 

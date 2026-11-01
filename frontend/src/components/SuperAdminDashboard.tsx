@@ -44,6 +44,15 @@ export function SuperAdminDashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [syncingPatients, setSyncingPatients] = useState(false);
 
+  // Hospital Admin Modal State
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [selectedHospitalForAdmin, setSelectedHospitalForAdmin] = useState<Hospital | null>(null);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminFullName, setAdminFullName] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminPhone, setAdminPhone] = useState("");
+  const [adminSubmitting, setAdminSubmitting] = useState(false);
+
   // Search
   const [hospitalSearch, setHospitalSearch] = useState("");
   const [auditSearch, setAuditSearch] = useState("");
@@ -118,6 +127,62 @@ export function SuperAdminDashboard() {
       setSuccess(`Hospital ${updated.name} status updated to ${updated.is_active ? "Active" : "Inactive"}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to toggle status.");
+    }
+  };
+
+  const handleUpdateApprovalStatus = async (hospital: Hospital, newStatus: "approved" | "rejected") => {
+    setError("");
+    setSuccess("");
+    try {
+      const res = await apiFetch(`/api/v1/hospitals/${hospital.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          approval_status: newStatus,
+          is_active: newStatus === "approved" ? true : hospital.is_active,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to update hospital approval status.");
+      }
+      setHospitals((prev) => prev.map((h) => (h.id === data.id ? data : h)));
+      setSuccess(`Hospital ${data.name} marked as ${newStatus.toUpperCase()}! Multi-hospital patient records synchronized.`);
+    } catch (err: any) {
+      setError(err.message || "Failed to update approval status.");
+    }
+  };
+
+  const handleCreateHospitalAdminSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedHospitalForAdmin) return;
+    setAdminSubmitting(true);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await apiFetch(`/api/v1/hospitals/${selectedHospitalForAdmin.id}/admin`, {
+        method: "POST",
+        body: JSON.stringify({
+          email: adminEmail.trim().toLowerCase(),
+          full_name: adminFullName.trim(),
+          password: adminPassword.trim() || undefined,
+          phone: adminPhone.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to create hospital admin account.");
+      }
+      setSuccess(`Hospital Admin account for ${data.full_name} (${data.email}) created for ${selectedHospitalForAdmin.name}!`);
+      setShowAdminModal(false);
+      setSelectedHospitalForAdmin(null);
+      setAdminEmail("");
+      setAdminFullName("");
+      setAdminPassword("");
+      setAdminPhone("");
+    } catch (err: any) {
+      setError(err.message || "Admin creation failed.");
+    } finally {
+      setAdminSubmitting(false);
     }
   };
 
@@ -387,39 +452,132 @@ export function SuperAdminDashboard() {
                     <th>Facility Code</th>
                     <th>Hospital Name</th>
                     <th>Location</th>
-                    <th>Contact Phone</th>
-                    <th>Official Email</th>
-                    <th>Status</th>
-                    <th>Action</th>
+                    <th>Approval Status</th>
+                    <th>Network Status</th>
+                    <th>Management Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredHospitals.map((h) => (
-                    <tr key={h.id}>
-                      <td>
-                        <span className="code-badge">{h.code}</span>
-                      </td>
-                      <td>
-                        <strong>{h.name}</strong>
-                      </td>
-                      <td>{h.location}</td>
-                      <td>{h.phone || "—"}</td>
-                      <td>{h.email || "—"}</td>
-                      <td>
-                        <span className={`status-pill ${h.is_active ? "active" : "inactive"}`}>
-                          {h.is_active ? "● Active" : "○ Inactive"}
-                        </span>
-                      </td>
-                      <td>
-                        <button
-                          className={`btn-action-status ${h.is_active ? "deactivate" : "activate"}`}
-                          onClick={() => handleToggleHospitalStatus(h)}
-                        >
-                          {h.is_active ? "Deactivate" : "Activate"}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredHospitals.map((h) => {
+                    const approval = h.approval_status || "approved";
+                    return (
+                      <tr key={h.id}>
+                        <td>
+                          <span className="code-badge">{h.code}</span>
+                        </td>
+                        <td>
+                          <strong>{h.name}</strong>
+                          {h.email && <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{h.email}</div>}
+                        </td>
+                        <td>
+                          {h.location}
+                          {h.phone && <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{h.phone}</div>}
+                        </td>
+                        <td>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              padding: "2px 8px",
+                              borderRadius: 9999,
+                              background:
+                                approval === "approved"
+                                  ? "#dcfce7"
+                                  : approval === "rejected"
+                                  ? "#fee2e2"
+                                  : "#fef3c7",
+                              color:
+                                approval === "approved"
+                                  ? "#166534"
+                                  : approval === "rejected"
+                                  ? "#991b1b"
+                                  : "#92400e",
+                            }}
+                          >
+                            {approval === "approved" && "✓ Approved"}
+                            {approval === "rejected" && "✕ Rejected"}
+                            {approval === "pending" && "⏳ Pending"}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`status-pill ${h.is_active ? "active" : "inactive"}`}>
+                            {h.is_active ? "● Online" : "○ Offline"}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                            {approval !== "approved" && (
+                              <button
+                                style={{
+                                  background: "#16a34a",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: 4,
+                                  padding: "3px 8px",
+                                  fontSize: "0.75rem",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                }}
+                                title="Approve Facility Registration & Share Network Patients"
+                                onClick={() => handleUpdateApprovalStatus(h, "approved")}
+                              >
+                                Approve
+                              </button>
+                            )}
+                            {approval !== "rejected" && (
+                              <button
+                                style={{
+                                  background: "#ef4444",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: 4,
+                                  padding: "3px 8px",
+                                  fontSize: "0.75rem",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                }}
+                                title="Reject Facility Registration"
+                                onClick={() => handleUpdateApprovalStatus(h, "rejected")}
+                              >
+                                Reject
+                              </button>
+                            )}
+                            <button
+                              style={{
+                                background: "#0284c7",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 4,
+                                padding: "3px 8px",
+                                fontSize: "0.75rem",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                              }}
+                              title="Create Hospital Administrator Account"
+                              onClick={() => {
+                                setSelectedHospitalForAdmin(h);
+                                setAdminEmail(`admin.${h.code.toLowerCase()}@x7medicore.local`);
+                                setAdminFullName(`${h.name} Admin`);
+                                setShowAdminModal(true);
+                              }}
+                            >
+                              + Admin
+                            </button>
+                            <button
+                              className={`btn-action-status ${h.is_active ? "deactivate" : "activate"}`}
+                              style={{ padding: "3px 8px", fontSize: "0.75rem" }}
+                              onClick={() => handleToggleHospitalStatus(h)}
+                            >
+                              {h.is_active ? "Deactivate" : "Activate"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -569,6 +727,92 @@ export function SuperAdminDashboard() {
                 </button>
                 <button type="submit" className="btn-primary" disabled={submitting}>
                   {submitting ? "Registering Facility…" : "Register Facility"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Hospital Admin Modal */}
+      {showAdminModal && selectedHospitalForAdmin && (
+        <div className="modal-backdrop">
+          <div className="modal-content" style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0 }}>Create Hospital Admin Account</h3>
+                <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "#64748b" }}>
+                  {selectedHospitalForAdmin.name} ({selectedHospitalForAdmin.code})
+                </p>
+              </div>
+              <button
+                className="modal-close"
+                onClick={() => {
+                  setShowAdminModal(false);
+                  setSelectedHospitalForAdmin(null);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleCreateHospitalAdminSubmit} className="modal-form">
+              <div className="form-field">
+                <label>Admin Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={adminFullName}
+                  onChange={(e) => setAdminFullName(e.target.value)}
+                  placeholder="e.g. Dr. Rajesh Kumar"
+                />
+              </div>
+
+              <div className="form-field">
+                <label>Official Email Address *</label>
+                <input
+                  type="email"
+                  required
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  placeholder="e.g. admin.ganga@x7medicore.local"
+                />
+              </div>
+
+              <div className="form-row-2">
+                <div className="form-field">
+                  <label>Initial Password (Min 8 chars)</label>
+                  <input
+                    type="password"
+                    minLength={8}
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder="Defaults to ChangeMe123!"
+                  />
+                </div>
+                <div className="form-field">
+                  <label>Contact Phone</label>
+                  <input
+                    type="text"
+                    value={adminPhone}
+                    onChange={(e) => setAdminPhone(e.target.value)}
+                    placeholder="+91 98400 12345"
+                  />
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setShowAdminModal(false);
+                    setSelectedHospitalForAdmin(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={adminSubmitting}>
+                  {adminSubmitting ? "Creating Admin..." : "Create Hospital Admin"}
                 </button>
               </div>
             </form>

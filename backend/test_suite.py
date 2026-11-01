@@ -367,8 +367,114 @@ def run_all_tests():
     assert bg_data["status"] == "EMERGENCY_ACCESS_GRANTED"
     print("✓ Test 24: Emergency Break-Glass access workflow and high-priority audit logging verified")
 
+    # 25. Roles Matrix & RBAC Matrix
+    roles_res = client.get("/api/v1/roles")
+    assert roles_res.status_code == 200
+    roles = roles_res.json()
+    assert len(roles) >= 8
+    assert any(r["role"] == "super_admin" for r in roles)
+    assert any(r["role"] == "receptionist" for r in roles)
+    print(f"✓ Test 25: Roles matrix and RBAC endpoint verified ({len(roles)} roles configured)")
+
+    # Super Admin login for enterprise governance tests
+    sa_login = client.post("/api/v1/auth/login", json={
+        "identifier": "superadmin@x7medicore.local",
+        "password": "ChangeMe123!",
+        "portal": "super_admin"
+    })
+    assert sa_login.status_code == 200
+    sa_headers = {"Authorization": f"Bearer {sa_login.json()['access_token']}"}
+
+    # 26. Super Admin Hospital Approval Status
+    hosp_status_res = client.patch("/api/v1/hospitals/GANGA/status", headers=sa_headers, json={
+        "approval_status": "approved",
+        "is_active": True,
+        "reason": "Accreditation verified"
+    })
+    assert hosp_status_res.status_code == 200
+    assert hosp_status_res.json()["approval_status"] == "approved"
+    print("✓ Test 26: Super Admin hospital approval and activation status verified for GANGA")
+
+    # 27. Create Hospital Admin Account
+    admin_email = f"test.admin.{int(time.time())}@gangahospital.com"
+    admin_res = client.post("/api/v1/hospitals/GANGA/admin", headers=sa_headers, json={
+        "email": admin_email,
+        "full_name": "Ganga Hospital Administrator",
+        "phone": "+91 422 248 5000",
+        "password": "ChangeMe123!"
+    })
+    assert admin_res.status_code == 201
+    assert admin_res.json()["role"] == "hospital_admin"
+    print("✓ Test 27: Hospital Admin provisioning verified for facility GANGA")
+
+    # 28. Hospital Departments Management
+    dept_code = f"DEPT-{int(time.time()) % 10000}"
+    dept_res = client.post("/api/v1/departments?hospital_code=GANGA", headers=sa_headers, json={
+        "name": "Advanced Orthopedics & Trauma",
+        "code": dept_code,
+        "head_of_department": "Dr. S. Rajasekaran",
+        "description": "Comprehensive orthopedic and spinal reconstruction"
+    })
+    assert dept_res.status_code == 201
+    dept_id = dept_res.json()["id"]
+
+    dept_list_res = client.get("/api/v1/departments?hospital_id=GANGA")
+    assert dept_list_res.status_code == 200
+    assert any(d["id"] == dept_id for d in dept_list_res.json())
+    print(f"✓ Test 28: Department creation, listing, and inspection verified (Dept ID: {dept_id})")
+
+    # 29. Staff Onboarding with Unique Employee ID
+    staff_email = f"dr.test.{int(time.time())}@gangahospital.com"
+    staff_create_res = client.post("/api/v1/staff", headers=sa_headers, json={
+        "email": staff_email,
+        "full_name": "Dr. Ramesh Orthopedics",
+        "role": "doctor",
+        "hospital_code": "GANGA",
+        "department": "Advanced Orthopedics & Trauma",
+        "phone": "+91 98400 55667",
+        "password": "ChangeMe123!"
+    })
+    assert staff_create_res.status_code == 201
+    staff_data = staff_create_res.json()
+    assert staff_data["employee_id"] is not None
+    assert staff_data["hospital_code"] == "GANGA"
+    print(f"✓ Test 29: Staff member onboarded with unique Employee ID: {staff_data['employee_id']}")
+
+    # 30. Staff Invitation & Token Password Activation
+    invite_email = f"nurse.invite.{int(time.time())}@gangahospital.com"
+    invite_res = client.post("/api/v1/invitations", headers=sa_headers, json={
+        "email": invite_email,
+        "full_name": "Sister Mary Nurse",
+        "role": "nurse",
+        "hospital_code": "GANGA",
+        "department": "Critical Care Unit"
+    })
+    assert invite_res.status_code == 200
+    invite_token = invite_res.json()["token"]
+
+    # Verify invitation token
+    verify_res = client.get(f"/api/v1/invitations/{invite_token}")
+    assert verify_res.status_code == 200
+    assert verify_res.json()["valid"] is True
+
+    # Activate invitation
+    activate_res = client.post("/api/v1/invitations/activate", json={
+        "token": invite_token,
+        "password": "SecurePassword2026!"
+    })
+    assert activate_res.status_code == 200
+    assert activate_res.json()["success"] is True
+    print(f"✓ Test 30: Staff invitation generated, verified, and activated with custom password")
+
+    # 31. Audit Trail Retrieval
+    audit_res = client.get("/api/v1/audit?limit=25", headers=sa_headers)
+    assert audit_res.status_code == 200
+    audit_logs = audit_res.json()
+    assert len(audit_logs) > 0
+    print(f"✓ Test 31: System & security audit logs retrieved ({len(audit_logs)} log events verified)")
+
     print("=====================================================================")
-    print("  ALL 24 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
+    print("  ALL 31 SYSTEM VERIFICATION TESTS PASSED SUCCESSFULLY! (100% OK)     ")
     print("=====================================================================")
 
 if __name__ == "__main__":

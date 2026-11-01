@@ -16,6 +16,7 @@ class Hospital(Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    approval_status: Mapped[str] = mapped_column(String(30), default="approved", nullable=False)  # approved | pending | rejected
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     memberships: Mapped[list["UserHospitalMembership"]] = relationship("UserHospitalMembership", back_populates="hospital")
@@ -30,6 +31,10 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(500), nullable=False)
     hospital_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    employee_id: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    department: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    invitation_token: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

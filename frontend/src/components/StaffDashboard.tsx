@@ -48,6 +48,7 @@ import {
   MapPin,
   Shield,
   Check,
+  CheckCircle2,
   Copy,
   Printer,
   QrCode,
@@ -183,12 +184,41 @@ export function StaffDashboard() {
   const [noteType, setNoteType] = useState("observation");
   const [noteText, setNoteText] = useState("");
 
+  // Staff Onboarding & Management State
+  const [showOnboardStaffModal, setShowOnboardStaffModal] = useState(false);
+  const [onboardStaffForm, setOnboardStaffForm] = useState({
+    email: "",
+    full_name: "",
+    role: "doctor",
+    department: "General Medicine",
+    phone: "",
+    password: "",
+  });
+
+  const [showInviteStaffModal, setShowInviteStaffModal] = useState(false);
+  const [inviteStaffForm, setInviteStaffForm] = useState({
+    email: "",
+    full_name: "",
+    role: "nurse",
+    department: "General Medicine",
+  });
+  const [generatedInviteLink, setGeneratedInviteLink] = useState<string | null>(null);
+
+  // Departments Management State
+  const [showAddDeptModal, setShowAddDeptModal] = useState(false);
+  const [deptForm, setDeptForm] = useState({
+    name: "",
+    code: "",
+    head_of_department: "",
+    description: "",
+  });
+
   const roleTitle = role.replaceAll("_", " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
 
   // Allowed modules
   const modules =
     role === "hospital_admin"
-      ? ["Overview", "Patients", "Doctors", "Appointments", "Treatments", "Lab Reports", "Prescriptions", "Invoices"]
+      ? ["Overview", "Patients", "Doctors", "Staff Onboarding", "Departments", "Appointments", "Treatments", "Lab Reports", "Prescriptions", "Invoices"]
       : role === "doctor"
       ? ["Overview", "Patients", "Appointments", "Treatments", "Lab Reports", "Prescriptions"]
       : role === "nurse"
@@ -199,11 +229,15 @@ export function StaffDashboard() {
       ? ["Overview", "Prescriptions"]
       : role === "billing_staff"
       ? ["Overview", "Invoices"]
+      : role === "receptionist"
+      ? ["Overview", "Patients", "Appointments"]
       : ["Overview", "Patients", "Appointments"];
 
   const endpoints: Record<string, string> = {
     Patients: "patients",
     Doctors: "doctors",
+    "Staff Onboarding": "staff",
+    Departments: "departments",
     Appointments: "appointments",
     Treatments: "treatments",
     "Lab Reports": "lab-reports",
@@ -619,6 +653,118 @@ export function StaffDashboard() {
     }
   };
 
+  const handleOnboardStaff = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const res = await apiFetch("/api/v1/staff", {
+        method: "POST",
+        body: JSON.stringify({
+          ...onboardStaffForm,
+          hospital_code: hospitalCode,
+          password: onboardStaffForm.password || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to onboard staff.");
+
+      setNotice(`Staff member ${data.full_name} (${data.employee_id}) onboarded successfully!`);
+      setShowOnboardStaffModal(false);
+      setOnboardStaffForm({
+        email: "",
+        full_name: "",
+        role: "doctor",
+        department: "General Medicine",
+        phone: "",
+        password: "",
+      });
+      loadModuleItems();
+    } catch (err: any) {
+      setError(err.message || "Failed to onboard staff.");
+    }
+  };
+
+  const handleInviteStaff = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const res = await apiFetch("/api/v1/invitations", {
+        method: "POST",
+        body: JSON.stringify({
+          ...inviteStaffForm,
+          hospital_code: hospitalCode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to generate invitation.");
+
+      setGeneratedInviteLink(data.invitation_link);
+      setNotice(`Invitation generated for ${data.email}! Share the activation link below.`);
+      loadModuleItems();
+    } catch (err: any) {
+      setError(err.message || "Failed to send invitation.");
+    }
+  };
+
+  const handleToggleStaffStatus = async (staffId: number, currentActive: boolean) => {
+    setError("");
+    setNotice("");
+    try {
+      const res = await apiFetch(`/api/v1/staff/${staffId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: !currentActive }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to update staff status.");
+
+      setNotice(`Staff status updated to ${data.is_active ? "Active" : "Inactive"}.`);
+      loadModuleItems();
+    } catch (err: any) {
+      setError(err.message || "Failed to change staff status.");
+    }
+  };
+
+  const handleAddDepartment = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const res = await apiFetch(`/api/v1/departments?hospital_code=${hospitalCode}`, {
+        method: "POST",
+        body: JSON.stringify(deptForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to add department.");
+
+      setNotice(`Department ${data.name} (${data.code}) created successfully.`);
+      setShowAddDeptModal(false);
+      setDeptForm({ name: "", code: "", head_of_department: "", description: "" });
+      loadModuleItems();
+    } catch (err: any) {
+      setError(err.message || "Failed to create department.");
+    }
+  };
+
+  const handleToggleDeptStatus = async (deptId: number, currentActive: boolean) => {
+    setError("");
+    setNotice("");
+    try {
+      const res = await apiFetch(`/api/v1/departments/${deptId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: !currentActive }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to update department status.");
+
+      setNotice(`Department ${data.name} status updated.`);
+      loadModuleItems();
+    } catch (err: any) {
+      setError(err.message || "Failed to change department status.");
+    }
+  };
+
   const cards = [
     ["Patients", summary?.patients ?? "—", Users],
     ["Doctors", summary?.doctors ?? "—", Stethoscope],
@@ -661,6 +807,10 @@ export function StaffDashboard() {
               <Users size={17} />
             ) : m === "Doctors" ? (
               <Stethoscope size={17} />
+            ) : m === "Staff Onboarding" ? (
+              <ShieldCheck size={17} />
+            ) : m === "Departments" ? (
+              <Building2 size={17} />
             ) : m === "Appointments" ? (
               <Activity size={17} />
             ) : m === "Treatments" ? (
@@ -1131,6 +1281,208 @@ export function StaffDashboard() {
                 </div>
               )}
             </div>
+          </section>
+        ) : module === "Staff Onboarding" ? (
+          /* STAFF ONBOARDING MODULE */
+          <section className="panel-box data-panel">
+            <div className="panel-header">
+              <div>
+                <h2>Staff & Clinician Management</h2>
+                <p>Onboard hospital personnel, assign departments, and track employee accounts ({hospitalCode}).</p>
+              </div>
+
+              <div className="header-actions">
+                <div className="table-search-box">
+                  <Search size={16} />
+                  <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Search by name, employee ID, role..."
+                  />
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={() => setShowOnboardStaffModal(true)}
+                >
+                  <Plus size={16} /> Onboard Staff
+                </button>
+                <button
+                  className="btn-action-outline"
+                  onClick={() => {
+                    setGeneratedInviteLink(null);
+                    setShowInviteStaffModal(true);
+                  }}
+                >
+                  <Mail size={16} /> Send Email Invite
+                </button>
+              </div>
+            </div>
+
+            {loading ? (
+              <p className="empty-message">Loading staff members...</p>
+            ) : items.length === 0 ? (
+              <p className="empty-message">No staff members found for this facility. Click "Onboard Staff" to add clinicians and hospital personnel.</p>
+            ) : (
+              <div className="table-responsive">
+                <table className="enterprise-table">
+                  <thead>
+                    <tr>
+                      <th>Employee ID</th>
+                      <th>Staff Member</th>
+                      <th>Role</th>
+                      <th>Department</th>
+                      <th>Contact</th>
+                      <th>Verification</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items
+                      .filter((st) =>
+                        JSON.stringify(st).toLowerCase().includes(q.toLowerCase())
+                      )
+                      .map((st) => (
+                        <tr key={st.id}>
+                          <td>
+                            <span className="code-badge">{st.employee_id || `EMP-${st.id}`}</span>
+                          </td>
+                          <td>
+                            <strong>{st.full_name}</strong>
+                            <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{st.email}</div>
+                          </td>
+                          <td>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                padding: "2px 8px",
+                                borderRadius: 4,
+                                fontSize: "0.75rem",
+                                fontWeight: 600,
+                                background: "#f1f5f9",
+                                color: "#334155",
+                                textTransform: "capitalize",
+                              }}
+                            >
+                              {st.role?.replace("_", " ")}
+                            </span>
+                          </td>
+                          <td>{st.department || "General"}</td>
+                          <td>{st.phone || "—"}</td>
+                          <td>
+                            <span
+                              style={{
+                                fontSize: "0.75rem",
+                                fontWeight: 600,
+                                padding: "2px 8px",
+                                borderRadius: 9999,
+                                background: st.is_verified ? "#dcfce7" : "#fef3c7",
+                                color: st.is_verified ? "#166534" : "#92400e",
+                              }}
+                            >
+                              {st.is_verified ? "✓ Verified" : "⏳ Pending"}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`status-pill ${st.is_active ? "active" : "inactive"}`}>
+                              {st.is_active ? "● Active" : "○ Inactive"}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              className={`btn-action-status ${st.is_active ? "deactivate" : "activate"}`}
+                              style={{ padding: "3px 8px", fontSize: "0.75rem" }}
+                              onClick={() => handleToggleStaffStatus(st.id, st.is_active)}
+                            >
+                              {st.is_active ? "Deactivate" : "Activate"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ) : module === "Departments" ? (
+          /* DEPARTMENTS MODULE */
+          <section className="panel-box data-panel">
+            <div className="panel-header">
+              <div>
+                <h2>Hospital Departments & Clinical Units</h2>
+                <p>Manage clinical departments and clinical specialties for {hospitalCode}.</p>
+              </div>
+
+              <div className="header-actions">
+                <div className="table-search-box">
+                  <Search size={16} />
+                  <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Search departments..."
+                  />
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={() => setShowAddDeptModal(true)}
+                >
+                  <Plus size={16} /> Add Department
+                </button>
+              </div>
+            </div>
+
+            {loading ? (
+              <p className="empty-message">Loading departments...</p>
+            ) : items.length === 0 ? (
+              <p className="empty-message">No departments recorded. Click "Add Department" to configure hospital units.</p>
+            ) : (
+              <div className="table-responsive">
+                <table className="enterprise-table">
+                  <thead>
+                    <tr>
+                      <th>Dept Code</th>
+                      <th>Department Name</th>
+                      <th>Head of Department</th>
+                      <th>Description</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items
+                      .filter((dp) =>
+                        JSON.stringify(dp).toLowerCase().includes(q.toLowerCase())
+                      )
+                      .map((dp) => (
+                        <tr key={dp.id}>
+                          <td>
+                            <span className="code-badge">{dp.code}</span>
+                          </td>
+                          <td>
+                            <strong>{dp.name}</strong>
+                          </td>
+                          <td>{dp.head_of_department || "—"}</td>
+                          <td>{dp.description || "—"}</td>
+                          <td>
+                            <span className={`status-pill ${dp.is_active ? "active" : "inactive"}`}>
+                              {dp.is_active ? "● Active" : "○ Inactive"}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              className={`btn-action-status ${dp.is_active ? "deactivate" : "activate"}`}
+                              style={{ padding: "3px 8px", fontSize: "0.75rem" }}
+                              onClick={() => handleToggleDeptStatus(dp.id, dp.is_active)}
+                            >
+                              {dp.is_active ? "Deactivate" : "Activate"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         ) : (
           /* DEFAULT MODULE (Doctors, Appointments, Invoices, Lab Reports, Prescriptions) */
@@ -2246,6 +2598,312 @@ export function StaffDashboard() {
                 </button>
                 <button type="submit" className="btn-primary">
                   Save Note to Audit Trail
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Onboard New Staff Member */}
+      {showOnboardStaffModal && (
+        <div className="modal-backdrop" onClick={() => setShowOnboardStaffModal(false)}>
+          <div className="modal-content medium-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">FACILITY STAFF ONBOARDING</span>
+                <h2>Onboard Healthcare Staff Member</h2>
+                <p>Register clinician or staff account for facility {hospitalCode}.</p>
+              </div>
+              <button className="close-btn" onClick={() => setShowOnboardStaffModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleOnboardStaff}>
+              <div className="modal-body form-grid-2">
+                <div className="form-field full-width">
+                  <label>Full Legal Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={onboardStaffForm.full_name}
+                    onChange={(e) => setOnboardStaffForm({ ...onboardStaffForm, full_name: e.target.value })}
+                    placeholder="e.g. Dr. Kavitha Sundaram"
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Official Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={onboardStaffForm.email}
+                    onChange={(e) => setOnboardStaffForm({ ...onboardStaffForm, email: e.target.value })}
+                    placeholder="kavitha@hospital.com"
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Staff Role *</label>
+                  <select
+                    value={onboardStaffForm.role}
+                    onChange={(e) => setOnboardStaffForm({ ...onboardStaffForm, role: e.target.value })}
+                  >
+                    <option value="doctor">Doctor / Medical Specialist</option>
+                    <option value="nurse">Staff Nurse</option>
+                    <option value="lab_technician">Laboratory Technician</option>
+                    <option value="pharmacist">Clinical Pharmacist</option>
+                    <option value="receptionist">Front Desk / Receptionist</option>
+                    <option value="billing_staff">Billing & Insurance</option>
+                    <option value="other_staff">Administrative Staff</option>
+                  </select>
+                </div>
+
+                <div className="form-field">
+                  <label>Department</label>
+                  <input
+                    type="text"
+                    value={onboardStaffForm.department}
+                    onChange={(e) => setOnboardStaffForm({ ...onboardStaffForm, department: e.target.value })}
+                    placeholder="e.g. Cardiology, OPD, Emergency"
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Contact Phone</label>
+                  <input
+                    type="tel"
+                    value={onboardStaffForm.phone}
+                    onChange={(e) => setOnboardStaffForm({ ...onboardStaffForm, phone: e.target.value })}
+                    placeholder="+91 98400 12345"
+                  />
+                </div>
+
+                <div className="form-field full-width">
+                  <label>Initial Password (Optional - leave blank to generate invitation)</label>
+                  <input
+                    type="password"
+                    minLength={8}
+                    value={onboardStaffForm.password}
+                    onChange={(e) => setOnboardStaffForm({ ...onboardStaffForm, password: e.target.value })}
+                    placeholder="Leave empty or set min 8 characters"
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowOnboardStaffModal(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Onboard Staff Member
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Send Email Invitation */}
+      {showInviteStaffModal && (
+        <div className="modal-backdrop" onClick={() => setShowInviteStaffModal(false)}>
+          <div className="modal-content medium-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">STAFF INVITATION</span>
+                <h2>Send Staff Invitation Email</h2>
+                <p>Generate a secure password activation link for onboarding.</p>
+              </div>
+              <button className="close-btn" onClick={() => setShowInviteStaffModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {generatedInviteLink ? (
+              <div style={{ padding: "1.5rem" }}>
+                <div style={{ background: "#dcfce7", border: "1px solid #86efac", borderRadius: 8, padding: "1rem", marginBottom: "1rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#166534", fontWeight: 600, marginBottom: 4 }}>
+                    <CheckCircle2 size={18} />
+                    <span>Invitation Successfully Generated!</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: "0.85rem", color: "#15803d" }}>
+                    Share the link below with {inviteStaffForm.full_name} ({inviteStaffForm.email}) to activate their account.
+                  </p>
+                </div>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    readOnly
+                    value={`${window.location.origin}${generatedInviteLink}`}
+                    style={{ flex: 1, padding: "0.6rem 0.75rem", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: "0.85rem", background: "#f8fafc" }}
+                  />
+                  <button
+                    className="btn-primary"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}${generatedInviteLink}`);
+                      setNotice("Invitation link copied to clipboard!");
+                    }}
+                  >
+                    Copy Link
+                  </button>
+                </div>
+
+                <div style={{ marginTop: "1.5rem", textAlign: "right" }}>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      setShowInviteStaffModal(false);
+                      setGeneratedInviteLink(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleInviteStaff}>
+                <div className="modal-body form-grid-2">
+                  <div className="form-field full-width">
+                    <label>Staff Full Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={inviteStaffForm.full_name}
+                      onChange={(e) => setInviteStaffForm({ ...inviteStaffForm, full_name: e.target.value })}
+                      placeholder="e.g. Priya Anbarasan"
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label>Email Address *</label>
+                    <input
+                      type="email"
+                      required
+                      value={inviteStaffForm.email}
+                      onChange={(e) => setInviteStaffForm({ ...inviteStaffForm, email: e.target.value })}
+                      placeholder="priya@hospital.com"
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label>Role Assignment *</label>
+                    <select
+                      value={inviteStaffForm.role}
+                      onChange={(e) => setInviteStaffForm({ ...inviteStaffForm, role: e.target.value })}
+                    >
+                      <option value="doctor">Doctor</option>
+                      <option value="nurse">Nurse</option>
+                      <option value="lab_technician">Lab Technician</option>
+                      <option value="pharmacist">Pharmacist</option>
+                      <option value="receptionist">Receptionist</option>
+                      <option value="other_staff">Administrative Staff</option>
+                    </select>
+                  </div>
+
+                  <div className="form-field full-width">
+                    <label>Department</label>
+                    <input
+                      type="text"
+                      value={inviteStaffForm.department}
+                      onChange={(e) => setInviteStaffForm({ ...inviteStaffForm, department: e.target.value })}
+                      placeholder="e.g. ICU, Pediatrics, Pharmacy"
+                    />
+                  </div>
+                </div>
+
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setShowInviteStaffModal(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn-primary">
+                    Generate Invitation Link
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Add Department */}
+      {showAddDeptModal && (
+        <div className="modal-backdrop" onClick={() => setShowAddDeptModal(false)}>
+          <div className="modal-content medium-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">DEPARTMENT CONFIGURATION</span>
+                <h2>Add Hospital Department</h2>
+                <p>Configure clinical specialty or medical unit for {hospitalCode}.</p>
+              </div>
+              <button className="close-btn" onClick={() => setShowAddDeptModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddDepartment}>
+              <div className="modal-body form-grid-2">
+                <div className="form-field">
+                  <label>Department Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={deptForm.name}
+                    onChange={(e) => setDeptForm({ ...deptForm, name: e.target.value })}
+                    placeholder="e.g. Cardiology"
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Department Code *</label>
+                  <input
+                    type="text"
+                    required
+                    value={deptForm.code}
+                    onChange={(e) => setDeptForm({ ...deptForm, code: e.target.value.toUpperCase() })}
+                    placeholder="e.g. CARDIO"
+                  />
+                </div>
+
+                <div className="form-field full-width">
+                  <label>Head of Department</label>
+                  <input
+                    type="text"
+                    value={deptForm.head_of_department}
+                    onChange={(e) => setDeptForm({ ...deptForm, head_of_department: e.target.value })}
+                    placeholder="e.g. Dr. A. P. Sharma"
+                  />
+                </div>
+
+                <div className="form-field full-width">
+                  <label>Description / Specialization</label>
+                  <textarea
+                    rows={3}
+                    value={deptForm.description}
+                    onChange={(e) => setDeptForm({ ...deptForm, description: e.target.value })}
+                    placeholder="Provide overview of clinical services..."
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowAddDeptModal(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Save Department
                 </button>
               </div>
             </form>
