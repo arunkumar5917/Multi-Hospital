@@ -221,12 +221,19 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
   const [biodataForm, setBiodataForm] = useState({
     first_name: "",
     last_name: "",
+    date_of_birth: "",
+    gender: "Male",
+    blood_group: "O+",
     phone: "",
     email: "",
     address: "",
+    emergency_contact: "",
+    marital_status: "Single",
+    occupation: "Professional",
+    national_id: "",
     insurance_provider: "",
     insurance_policy_number: "",
-    emergency_contact: "",
+    insurance_valid_till: "",
   });
 
   // Filters
@@ -244,20 +251,33 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
 
     try {
       // 1. Profile
-      const profRes = await apiFetch(`/api/v1/patients/${grn}`);
-      if (!profRes.ok) throw new Error("Failed to load patient profile");
-      const profData: PatientProfile = await profRes.json();
+      let profData: PatientProfile | null = null;
+      const profRes = await apiFetch(`/api/v1/patients/${grn}/profile`);
+      if (profRes.ok) {
+        profData = await profRes.json();
+      } else {
+        const altRes = await apiFetch(`/api/v1/patients/${grn}`);
+        if (altRes.ok) profData = await altRes.json();
+      }
+      if (!profData) throw new Error("Failed to load patient profile");
       setProfile(profData);
       const nameParts = (profData.full_name || "").split(" ");
       setBiodataForm({
         first_name: profData.first_name || nameParts[0] || "",
         last_name: profData.last_name || nameParts.slice(1).join(" ") || "",
+        date_of_birth: profData.date_of_birth ? String(profData.date_of_birth).slice(0, 10) : "",
+        gender: profData.gender || "Male",
+        blood_group: profData.blood_group || "O+",
         phone: profData.phone || "",
         email: profData.email || "",
         address: profData.address || "",
+        emergency_contact: profData.emergency_contact || "",
+        marital_status: profData.marital_status || "Single",
+        occupation: profData.occupation || "Professional",
+        national_id: profData.national_id || "",
         insurance_provider: profData.insurance_provider || "",
         insurance_policy_number: profData.insurance_policy_number || "",
-        emergency_contact: profData.emergency_contact || "",
+        insurance_valid_till: profData.insurance_valid_till ? String(profData.insurance_valid_till).slice(0, 10) : "",
       });
 
       // 2. Medical History & Timeline
@@ -619,12 +639,20 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
   const handleEditBiodataSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...biodataForm,
+        date_of_birth: biodataForm.date_of_birth ? biodataForm.date_of_birth : null,
+        insurance_valid_till: biodataForm.insurance_valid_till ? biodataForm.insurance_valid_till : null,
+      };
       const res = await apiFetch(`/api/v1/patients/${grn}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(biodataForm),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error("Failed to update patient biodata");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || "Failed to update patient biodata");
+      }
       setShowEditBiodataModal(false);
       fetchAllPatientData(true);
     } catch (err: any) {
@@ -637,7 +665,7 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
   const canLogVitals = ["doctor", "nurse", "hospital_admin", "super_admin"].includes(userRole);
   const canDispense = ["pharmacist", "doctor", "hospital_admin", "super_admin"].includes(userRole);
   const canManageLabs = ["lab_tech", "doctor", "hospital_admin", "super_admin"].includes(userRole);
-  const canEditBiodata = ["doctor", "hospital_admin", "super_admin"].includes(userRole) || isSelfView;
+  const canEditBiodata = ["doctor", "nurse", "hospital_admin", "super_admin"].includes(userRole) || isSelfView;
   const canUploadDocs = ["doctor", "nurse", "lab_tech", "hospital_admin", "super_admin"].includes(userRole) || isSelfView;
 
   if (loading) {
@@ -3129,47 +3157,91 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
       {/* 9. Edit Biodata Modal */}
       {showEditBiodataModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-[#001C68] text-base">Update Patient Biodata</h3>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#EA0170] block">CENTRALIZED RECORD SETTINGS</span>
+                <h3 className="font-bold text-[#001C68] text-base">Update Patient Biodata & Demographics</h3>
+              </div>
               <button onClick={() => setShowEditBiodataModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleEditBiodataSubmit} className="mt-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleEditBiodataSubmit} className="mt-4 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">First Name</label>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">First Name *</label>
                   <input
                     type="text"
                     required
                     value={biodataForm.first_name}
                     onChange={(e) => setBiodataForm({ ...biodataForm, first_name: e.target.value })}
-                    className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Last Name</label>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Last Name *</label>
                   <input
                     type="text"
                     required
                     value={biodataForm.last_name}
                     onChange={(e) => setBiodataForm({ ...biodataForm, last_name: e.target.value })}
-                    className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Mobile Phone</label>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Date of Birth</label>
+                  <input
+                    type="date"
+                    value={biodataForm.date_of_birth}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, date_of_birth: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Gender</label>
+                  <select
+                    value={biodataForm.gender}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, gender: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Blood Group</label>
+                  <select
+                    value={biodataForm.blood_group}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, blood_group: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  >
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Mobile Phone *</label>
                   <input
                     type="tel"
                     required
                     value={biodataForm.phone}
                     onChange={(e) => setBiodataForm({ ...biodataForm, phone: e.target.value })}
-                    className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
                   />
                 </div>
                 <div>
@@ -3178,7 +3250,28 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
                     type="email"
                     value={biodataForm.email}
                     onChange={(e) => setBiodataForm({ ...biodataForm, email: e.target.value })}
-                    className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Emergency Contact</label>
+                  <input
+                    type="text"
+                    value={biodataForm.emergency_contact}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, emergency_contact: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">National / Health ID</label>
+                  <input
+                    type="text"
+                    value={biodataForm.national_id}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, national_id: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
                   />
                 </div>
               </div>
@@ -3189,32 +3282,66 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
                   type="text"
                   value={biodataForm.address}
                   onChange={(e) => setBiodataForm({ ...biodataForm, address: e.target.value })}
-                  className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                  className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Marital Status</label>
+                  <select
+                    value={biodataForm.marital_status}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, marital_status: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  >
+                    <option value="Single">Single</option>
+                    <option value="Married">Married</option>
+                    <option value="Divorced">Divorced</option>
+                    <option value="Widowed">Widowed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Occupation</label>
+                  <input
+                    type="text"
+                    value={biodataForm.occupation}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, occupation: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700 block mb-1">Insurance Provider</label>
                   <input
                     type="text"
                     value={biodataForm.insurance_provider}
                     onChange={(e) => setBiodataForm({ ...biodataForm, insurance_provider: e.target.value })}
-                    className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Insurance Policy #</label>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Policy Number</label>
                   <input
                     type="text"
                     value={biodataForm.insurance_policy_number}
                     onChange={(e) => setBiodataForm({ ...biodataForm, insurance_policy_number: e.target.value })}
-                    className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Valid Till</label>
+                  <input
+                    type="date"
+                    value={biodataForm.insurance_valid_till}
+                    onChange={(e) => setBiodataForm({ ...biodataForm, insurance_valid_till: e.target.value })}
+                    className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:border-[#001C68]"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-3">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setShowEditBiodataModal(false)}
@@ -3224,7 +3351,7 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#001C68] text-white rounded-lg text-xs font-bold hover:bg-[#002888]"
+                  className="px-4 py-1.5 bg-[#001C68] text-white rounded-lg text-xs font-bold hover:bg-[#002888] shadow-sm"
                 >
                   Save Demographics
                 </button>

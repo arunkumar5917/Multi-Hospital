@@ -54,6 +54,7 @@ import {
   TrendingUp,
   Thermometer,
   Droplets,
+  Settings,
 } from "lucide-react";
 
 export function PatientDashboard() {
@@ -277,13 +278,40 @@ export function PatientDashboard() {
     }
   };
 
+  const openEditProfileModal = () => {
+    if (profile) {
+      setProfileForm({
+        full_name: profile.full_name || "",
+        date_of_birth: profile.date_of_birth ? String(profile.date_of_birth).slice(0, 10) : "",
+        gender: profile.gender || "Male",
+        phone: profile.phone || "",
+        email: profile.email || "",
+        address: profile.address || "",
+        blood_group: profile.blood_group || "O+",
+        emergency_contact: profile.emergency_contact || "",
+        marital_status: profile.marital_status || "Single",
+        occupation: profile.occupation || "Professional",
+        national_id: profile.national_id || "",
+        insurance_provider: profile.insurance_provider || "",
+        insurance_policy_number: profile.insurance_policy_number || "",
+        insurance_valid_till: profile.insurance_valid_till ? String(profile.insurance_valid_till).slice(0, 10) : "",
+      });
+    }
+    setShowEditProfileModal(true);
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...profileForm,
+        date_of_birth: profileForm.date_of_birth ? profileForm.date_of_birth : null,
+        insurance_valid_till: profileForm.insurance_valid_till ? profileForm.insurance_valid_till : null,
+      };
       const res = await apiFetch("/api/v1/patients/me", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(profileForm),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -292,7 +320,7 @@ export function PatientDashboard() {
         setSuccessMsg("Patient demographics and insurance updated successfully.");
         setTimeout(() => setSuccessMsg(""), 3000);
       } else {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         setError(errData.detail || "Failed to update profile.");
       }
     } catch (err) {
@@ -626,13 +654,20 @@ export function PatientDashboard() {
         </button>
 
         <div className="sidebar-bottom">
-          <div className="user-profile-badge">
+          <div
+            className="user-profile-badge"
+            onClick={openEditProfileModal}
+            style={{ cursor: "pointer" }}
+            title="Click to edit profile settings & demographics"
+          >
             <div className="avatar-chip patient-chip">
               {profile?.full_name ? profile.full_name[0] : "P"}
             </div>
             <div>
               <strong>{profile?.full_name || user?.full_name}</strong>
-              <small>Verified Patient</small>
+              <small style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                Verified Patient &bull; <Settings size={11} /> Settings
+              </small>
             </div>
           </div>
           <button className="logout-btn" onClick={logout}>
@@ -721,7 +756,7 @@ export function PatientDashboard() {
                 <div className="patient-header-action-buttons">
                   <button
                     className="btn-sm-primary"
-                    onClick={() => setShowEditProfileModal(true)}
+                    onClick={openEditProfileModal}
                   >
                     <Edit3 size={14} /> Change Patient Profile
                   </button>

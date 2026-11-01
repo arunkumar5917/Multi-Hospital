@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 # ----------------- Authentication Schemas -----------------
 class TokenPayload(BaseModel):
@@ -105,6 +105,14 @@ class PatientSearchResult(BaseModel):
     email: str | None = None
     blood_group: str | None = None
     emergency_contact: str | None = None
+    address: str | None = None
+    marital_status: str | None = None
+    occupation: str | None = None
+    national_id: str | None = None
+    insurance_provider: str | None = None
+    insurance_policy_number: str | None = None
+    insurance_valid_till: date | None = None
+    registration_date: datetime | None = None
     primary_hospital_code: str | None = None
     primary_hospital_name: str | None = None
     linked_hospitals: list[str] = []
@@ -143,6 +151,8 @@ class PatientProfileOut(BaseModel):
 
 class PatientProfileUpdate(BaseModel):
     full_name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     date_of_birth: date | None = None
     gender: str | None = None
     phone: str | None = None
@@ -156,6 +166,21 @@ class PatientProfileUpdate(BaseModel):
     insurance_provider: str | None = None
     insurance_policy_number: str | None = None
     insurance_valid_till: date | None = None
+
+    @field_validator("date_of_birth", "insurance_valid_till", mode="before")
+    @classmethod
+    def parse_optional_date(cls, v):
+        if v == "" or v is None:
+            return None
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return None
+            try:
+                return date.fromisoformat(v[:10])
+            except Exception:
+                return None
+        return v
 
 # ----------------- Medical History, Conditions & Allergies -----------------
 class MedicalHistoryCreate(BaseModel):

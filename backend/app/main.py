@@ -1480,20 +1480,29 @@ def update_my_patient_profile(
     request: Request = None
 ):
     gp = None
-    if grn and grn.lower() != "me":
-        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
-    elif user.role == "patient":
+    if user.role == "patient":
         account = db.query(PatientAccount).filter(PatientAccount.user_id == user.id).first()
-        if account and account.global_patient:
-            gp = account.global_patient
+        if not account or not account.global_patient:
+            raise HTTPException(status_code=403, detail="Patient account not linked to any medical record.")
+        if grn and grn.lower() != "me" and grn.upper().strip() != account.global_patient.grn:
+            raise HTTPException(status_code=403, detail="Patients are only authorized to update their own profile.")
+        gp = account.global_patient
+    elif grn and grn.lower() != "me":
+        gp = db.query(GlobalPatient).filter(GlobalPatient.grn == grn.upper().strip()).first()
+    else:
+        gp = db.query(GlobalPatient).first()
 
     if not gp:
-        gp = db.query(GlobalPatient).first()
-        if not gp:
-            raise HTTPException(status_code=404, detail="Patient profile not found.")
+        raise HTTPException(status_code=404, detail="Patient profile not found.")
 
-    if payload.full_name is not None:
+    if payload.full_name is not None and payload.full_name.strip():
         gp.full_name = payload.full_name.strip()
+    elif payload.first_name is not None or payload.last_name is not None:
+        fn = (payload.first_name or "").strip()
+        ln = (payload.last_name or "").strip()
+        constructed = f"{fn} {ln}".strip()
+        if constructed:
+            gp.full_name = constructed
     if payload.date_of_birth is not None:
         gp.date_of_birth = payload.date_of_birth
     if payload.gender is not None:
@@ -1557,11 +1566,21 @@ def get_patient_by_grn(grn: str, db: Session = Depends(get_db), user: User = Dep
 
     log_medical_access(db, user, gp.id, user.hospital_id, "patient", gp.grn, "VIEW", request)
 
+    prof = gp.profile
     return PatientSearchResult(
         grn=gp.grn, full_name=gp.full_name, date_of_birth=gp.date_of_birth,
         gender=gp.gender, phone=gp.phone, email=gp.email, blood_group=gp.blood_group,
         emergency_contact=gp.emergency_contact,
+        address=gp.address,
+        marital_status=prof.marital_status if prof else "Single",
+        occupation=prof.occupation if prof else "Professional",
+        national_id=prof.national_id if prof else None,
+        insurance_provider=prof.insurance_provider if prof else None,
+        insurance_policy_number=prof.insurance_policy_number if prof else None,
+        insurance_valid_till=prof.insurance_valid_till if prof else None,
+        registration_date=gp.created_at,
         primary_hospital_code=linked_hospitals[0] if linked_hospitals else user.hospital_id,
+        primary_hospital_name=gp.hospital_links[0].hospital.name if gp.hospital_links and gp.hospital_links[0].hospital else None,
         linked_hospitals=linked_hospitals,
         is_linked_to_current_hospital=is_linked,
         consent_status="granted" if is_linked else "pending",
