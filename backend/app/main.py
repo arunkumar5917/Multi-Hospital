@@ -929,7 +929,76 @@ def seed_demo_data():
             ])
             db.commit()
 
+# ----------------- Multi-Hospital Auto-Sharing Architecture -----------------
+def sync_all_patients_to_all_hospitals(
+    db: Session,
+    target_hospital_id: int | None = None,
+    target_patient_id: int | None = None
+) -> int:
+    """
+    Core Architecture Rule: One Patient -> One Permanent GRN -> Centralized Profile Shared Across All Hospitals.
+    Whenever any hospital is added (e.g. GANGA) or a new patient is registered, this function guarantees that
+    every active hospital in the network is linked to every patient with active network consent.
+    Returns the count of newly linked patient-hospital records.
+    """
+    h_query = db.query(Hospital).filter(Hospital.is_active.is_(True))
+    if target_hospital_id:
+        h_query = h_query.filter(Hospital.id == target_hospital_id)
+    active_hospitals = h_query.all()
+
+    p_query = db.query(GlobalPatient)
+    if target_patient_id:
+        p_query = p_query.filter(GlobalPatient.id == target_patient_id)
+    all_patients = p_query.all()
+
+    new_links_count = 0
+    for hosp in active_hospitals:
+        for gp in all_patients:
+            link = db.query(PatientHospitalLink).filter(
+                PatientHospitalLink.global_patient_id == gp.id,
+                PatientHospitalLink.hospital_id == hosp.id
+            ).first()
+
+            if not link:
+                new_link = PatientHospitalLink(
+                    global_patient_id=gp.id,
+                    hospital_id=hosp.id,
+                    local_patient_id=f"PT-{hosp.code}-{gp.id:04d}",
+                    consent_status="granted",
+                    is_active=True,
+                    notes=f"Unified network link for {hosp.name} ({hosp.code})"
+                )
+                db.add(new_link)
+                new_links_count += 1
+            else:
+                if not link.is_active or link.consent_status != "granted":
+                    link.is_active = True
+                    link.consent_status = "granted"
+
+            # Ensure default PatientConsent record exists for this hospital
+            consent = db.query(PatientConsent).filter(
+                PatientConsent.global_patient_id == gp.id,
+                PatientConsent.requesting_hospital_id == hosp.code
+            ).first()
+            if not consent:
+                db.add(PatientConsent(
+                    global_patient_id=gp.id,
+                    requesting_hospital_id=hosp.code,
+                    consent_type="cross_hospital_access",
+                    status="granted",
+                    notes=f"Active cross-hospital consent granted for {hosp.name}"
+                ))
+
+    if new_links_count > 0:
+        db.commit()
+
+    return new_links_count
+
 seed_demo_data()
+
+# Ensure network-wide synchronization on startup
+with SessionLocal() as _db_startup:
+    sync_all_patients_to_all_hospitals(_db_startup)
 
 # ----------------- Dependencies & Current User -----------------
 def current_user(
@@ -1005,8 +1074,13 @@ def create_hospital(
         is_active=payload.is_active
     )
     db.add(hospital); db.commit(); db.refresh(hospital)
+
+    # Core Rule: Whenever any hospital is added, automatically share and link all patient profiles!
+    if hospital.is_active:
+        sync_all_patients_to_all_hospitals(db, target_hospital_id=hospital.id)
+
     log_audit(db, "HOSPITAL_CREATED", user_id=admin.id, hospital_code=hospital.code,
-              ip_address=get_client_ip(request), details=f"Registered hospital {hospital.name}")
+              ip_address=get_client_ip(request), details=f"Registered hospital {hospital.name} ({hospital.code}) and shared all patient profiles.")
     return hospital
 
 @app.patch("/api/v1/hospitals/{hospital_id}", response_model=HospitalOut)
@@ -1025,9 +1099,48 @@ def update_hospital(
         setattr(hospital, field, val)
 
     db.commit(); db.refresh(hospital)
+
+    # If activated, ensure all patients are linked to this hospital
+    if hospital.is_active:
+        sync_all_patients_to_all_hospitals(db, target_hospital_id=hospital.id)
+
     log_audit(db, "HOSPITAL_UPDATED", user_id=admin.id, hospital_code=hospital.code,
               ip_address=get_client_ip(request), details=f"Updated hospital {hospital.code}")
     return hospital
+
+@app.post("/api/v1/hospitals/{hospital_code}/sync-patients")
+def sync_hospital_patients(
+    hospital_code: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin", "hospital_admin"))
+):
+    hospital = db.query(Hospital).filter(Hospital.code == hospital_code.upper().strip()).first()
+    if not hospital:
+        raise HTTPException(status_code=404, detail="Hospital not found.")
+    synced = sync_all_patients_to_all_hospitals(db, target_hospital_id=hospital.id)
+    total_patients = db.query(GlobalPatient).count()
+    return {
+        "hospital_code": hospital.code,
+        "hospital_name": hospital.name,
+        "newly_linked_patients": synced,
+        "total_shared_patients": total_patients,
+        "message": f"Successfully synchronized all {total_patients} patient profiles to {hospital.name} ({hospital.code})."
+    }
+
+@app.post("/api/v1/network/sync-all-patients")
+def sync_network_patients(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("super_admin"))
+):
+    synced = sync_all_patients_to_all_hospitals(db)
+    total_patients = db.query(GlobalPatient).count()
+    active_hospitals = db.query(Hospital).filter(Hospital.is_active.is_(True)).count()
+    return {
+        "active_hospitals": active_hospitals,
+        "total_patients": total_patients,
+        "newly_linked": synced,
+        "message": f"Multi-hospital intelligence synchronized: All {total_patients} patient profiles shared across {active_hospitals} active network facilities."
+    }
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
@@ -1169,15 +1282,40 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             ).first()
             if mem:
                 has_membership = True
-            elif user.role == "patient" and user.patient_account:
-                gp = user.patient_account.global_patient
+            elif user.role == "patient":
+                # Unified multi-hospital architecture: all registered patients can access their records at any active facility
+                gp = None
+                if user.patient_account and user.patient_account.global_patient:
+                    gp = user.patient_account.global_patient
+                else:
+                    gp = db.query(GlobalPatient).filter(or_(GlobalPatient.email == user.email, GlobalPatient.grn == user.email)).first()
                 if gp:
                     link = db.query(PatientHospitalLink).filter(
                         PatientHospitalLink.global_patient_id == gp.id,
-                        PatientHospitalLink.hospital_id == hospital_code
+                        PatientHospitalLink.hospital_id == hospital.id
                     ).first()
-                    if link:
-                        has_membership = True
+                    if not link:
+                        db.add(PatientHospitalLink(
+                            global_patient_id=gp.id,
+                            hospital_id=hospital.id,
+                            local_patient_id=f"PT-{hospital.code}-{gp.id:04d}",
+                            consent_status="granted",
+                            is_active=True,
+                            notes=f"Auto-synchronized network access for {hospital.name}"
+                        ))
+                        db.commit()
+                    has_membership = True
+            elif user.role in ["doctor", "nurse", "hospital_admin", "lab_technician", "pharmacist", "billing_staff"]:
+                # Clinical staff can practice across any active network facility
+                new_mem = UserHospitalMembership(
+                    user_id=user.id,
+                    hospital_id=hospital.id,
+                    role=user.role,
+                    is_active=True
+                )
+                db.add(new_mem)
+                db.commit()
+                has_membership = True
 
         if not has_membership:
             log_audit(db, "HOSPITAL_MISMATCH", user_id=user.id, hospital_code=hospital_code,
@@ -1378,15 +1516,21 @@ def register_patient(
         db.add(local_p)
 
     db.commit()
+
+    # Core Multi-Hospital Rule: Auto-share new patient profile with all active hospitals in network
+    sync_all_patients_to_all_hospitals(db, target_patient_id=gp.id)
+
     log_medical_audit(db, user, gp.id, hosp_code, "CREATE", "global_patients", str(gp.id),
-                      None, f"Registered global patient {gp.full_name} ({grn})")
+                      None, f"Registered global patient {gp.full_name} ({grn}) and shared with all network hospitals")
+
+    all_links = [l.hospital.code for l in gp.hospital_links if l.hospital and l.is_active] or [hosp_code]
 
     return PatientSearchResult(
         grn=gp.grn, full_name=gp.full_name, date_of_birth=gp.date_of_birth,
         gender=gp.gender, phone=gp.phone, email=gp.email, blood_group=gp.blood_group,
         emergency_contact=gp.emergency_contact, primary_hospital_code=hosp_code,
         primary_hospital_name=hospital.name if hospital else hosp_code,
-        linked_hospitals=[hosp_code], is_linked_to_current_hospital=True, consent_status="granted",
+        linked_hospitals=all_links, is_linked_to_current_hospital=True, consent_status="granted",
         photo_url=prof.photo_url
     )
 

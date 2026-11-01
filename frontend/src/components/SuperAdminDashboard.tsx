@@ -18,6 +18,7 @@ import {
   Eye,
   Sliders,
   FileText,
+  Share2,
 } from "lucide-react";
 
 export function SuperAdminDashboard() {
@@ -41,10 +42,32 @@ export function SuperAdminDashboard() {
   const [newPhone, setNewPhone] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [syncingPatients, setSyncingPatients] = useState(false);
 
   // Search
   const [hospitalSearch, setHospitalSearch] = useState("");
   const [auditSearch, setAuditSearch] = useState("");
+
+  const handleSyncNetworkPatients = async () => {
+    setSyncingPatients(true);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await apiFetch("/api/v1/network/sync-all-patients", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to synchronize patient profiles.");
+      }
+      setSuccess(data.message || "All patient profiles synchronized across active network facilities.");
+      loadData();
+    } catch (err: any) {
+      setError(err.message || "Failed to synchronize patient profiles across facilities.");
+    } finally {
+      setSyncingPatients(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -124,7 +147,7 @@ export function SuperAdminDashboard() {
       }
 
       setHospitals((prev) => [...prev, data]);
-      setSuccess(`Hospital ${data.name} (${data.code}) registered successfully.`);
+      setSuccess(`Hospital ${data.name} (${data.code}) registered successfully and all patient profiles were shared across the network.`);
       setShowAddModal(false);
       setNewCode("");
       setNewName("");
@@ -342,6 +365,15 @@ export function SuperAdminDashboard() {
                     placeholder="Search hospitals..."
                   />
                 </div>
+                <button
+                  className="btn-secondary"
+                  onClick={handleSyncNetworkPatients}
+                  disabled={syncingPatients}
+                  title="Ensure all patient profiles and medical records are shared across all active network hospitals"
+                >
+                  <Share2 size={16} className={syncingPatients ? "spin-icon" : ""} />
+                  {syncingPatients ? "Syncing Network Profiles…" : "Share All Profiles Across Network"}
+                </button>
                 <button className="btn-primary" onClick={() => setShowAddModal(true)}>
                   <Plus size={16} /> Register Hospital
                 </button>
