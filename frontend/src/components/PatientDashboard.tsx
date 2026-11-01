@@ -2099,6 +2099,23 @@ export function PatientDashboard() {
 
             <form onSubmit={handleSaveProfile}>
               <div className="modal-body form-grid">
+                <div className="form-group full-width" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "16px", background: "var(--slate-50)", borderRadius: "var(--radius-md)", border: "1px dashed var(--slate-300)", marginBottom: "8px" }}>
+                  <label style={{ marginBottom: "10px", fontWeight: 700, fontSize: "13px", color: "var(--navy-900)" }}>
+                    Patient Profile Photograph (500 × 500 px)
+                  </label>
+                  <PatientProfilePhoto
+                    grn={grn}
+                    fullName={profileForm.full_name || profile?.full_name || "Patient"}
+                    photoUrl={profile?.photo_url}
+                    onPhotoUpdated={(newUrl) => {
+                      setProfile((prev) => (prev ? { ...prev, photo_url: newUrl } : null));
+                    }}
+                  />
+                  <small style={{ marginTop: "8px", color: "var(--slate-500)", fontSize: "11px" }}>
+                    Click avatar or "Upload Photo" to select an image (JPG, PNG, WebP).
+                  </small>
+                </div>
+
                 <div className="form-group">
                   <label>Full Name</label>
                   <input

@@ -3522,13 +3522,37 @@ a:hover {
   color: var(--navy-900);
 }
 
-.photo-btn-icon.danger {
+.photo-btn-icon.danger,
+.photo-btn-icon.text-danger {
   color: var(--slate-500);
 }
 
-.photo-btn-icon.danger:hover:not(:disabled) {
+.photo-btn-icon.danger:hover:not(:disabled),
+.photo-btn-icon.text-danger:hover:not(:disabled) {
   background: #fef2f2;
   color: #dc2626;
+}
+
+.photo-preview-modal-box {
+  max-width: 680px;
+  width: 95%;
+}
+
+.patient-photo-component-wrapper.size-small .patient-photo-circle-frame {
+  width: 60px;
+  height: 60px;
+  min-width: 60px;
+  min-height: 60px;
+  max-width: 60px;
+  max-height: 60px;
+}
+.patient-photo-component-wrapper.size-large .patient-photo-circle-frame {
+  width: 140px;
+  height: 140px;
+  min-width: 140px;
+  min-height: 140px;
+  max-width: 140px;
+  max-height: 140px;
 }
 
 /* Status Notice */

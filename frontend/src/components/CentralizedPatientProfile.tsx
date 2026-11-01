@@ -1265,6 +1265,33 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
                 )}
               </div>
 
+              {/* Photo & Identity Quick Row */}
+              <div className="flex flex-col sm:flex-row items-center gap-6 p-4 bg-slate-50 rounded-2xl border border-slate-200 mb-6">
+                <PatientProfilePhoto
+                  grn={profile.grn}
+                  fullName={patientDisplayName}
+                  photoUrl={profile.photo_url || profile.profile_photo_url}
+                  onPhotoUpdated={(newUrl) => {
+                    setProfile((prev) => prev ? { ...prev, photo_url: newUrl, profile_photo_url: newUrl } : null);
+                  }}
+                  canEdit={canEditBiodata}
+                />
+                <div className="flex-1 text-center sm:text-left">
+                  <h4 className="text-base font-black text-[#001C68]">{patientDisplayName}</h4>
+                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-1">
+                    <span className="font-mono text-xs font-bold text-[#001C68] bg-white px-2 py-0.5 rounded border border-slate-200">
+                      GRN: {profile.grn}
+                    </span>
+                    <span className="text-xs font-semibold text-[#EA0170] bg-pink-50 px-2 py-0.5 rounded border border-pink-200">
+                      Blood {profile.blood_group || "O+"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Permanent medical identity photo stored at 500 × 500 px. Supported formats: JPG, JPEG, PNG, WebP (Max 15 MB).
+                  </p>
+                </div>
+              </div>
+
               {/* Data Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
@@ -3169,6 +3196,22 @@ export const CentralizedPatientProfile: React.FC<CentralizedPatientProfileProps>
             </div>
 
             <form onSubmit={handleEditBiodataSubmit} className="mt-4 space-y-4">
+              {/* Profile Photograph Upload & Settings */}
+              <div className="flex flex-col items-center justify-center p-3 bg-slate-50 rounded-xl border border-dashed border-slate-300">
+                <span className="text-xs font-bold text-[#001C68] mb-2">Patient Profile Photograph (500 × 500 px)</span>
+                <PatientProfilePhoto
+                  grn={profile.grn}
+                  fullName={patientDisplayName}
+                  photoUrl={profile.photo_url || profile.profile_photo_url}
+                  onPhotoUpdated={(newUrl) => {
+                    setProfile((prev) => prev ? { ...prev, photo_url: newUrl, profile_photo_url: newUrl } : null);
+                  }}
+                  canEdit={true}
+                />
+                <span className="text-[11px] text-slate-500 mt-2">
+                  Click avatar or "Upload Photo" to select a new image.
+                </span>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700 block mb-1">First Name *</label>

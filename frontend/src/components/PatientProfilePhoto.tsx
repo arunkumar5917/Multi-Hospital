@@ -25,6 +25,10 @@ export const resolvePhotoUrl = (url: string | null | undefined): string => {
     return trimmed;
   }
   const cleanPath = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  // If running in development with relative path or Vite proxy
+  if (typeof window !== "undefined" && (!API_URL || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+    return cleanPath;
+  }
   return `${API_URL}${cleanPath}`;
 };
 
@@ -35,6 +39,7 @@ export interface PatientProfilePhotoProps {
   onPhotoUpdated?: (newPhotoUrl: string | null) => void;
   canEdit?: boolean;
   className?: string;
+  size?: "small" | "medium" | "large";
 }
 
 export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
@@ -44,6 +49,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
   onPhotoUpdated,
   canEdit = true,
   className = "",
+  size = "medium",
 }) => {
   const { user, apiFetch } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -59,18 +65,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
 
   // Modals
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [showConfirmUploadModal, setShowConfirmUploadModal] = useState(false);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
-
-  // Staged upload data
-  const [stagedFile, setStagedFile] = useState<{
-    file: Blob;
-    previewUrl: string;
-    originalName: string;
-    originalSize: number;
-    compressedSize: number;
-    dimensions: { originalW: number; originalH: number; finalW: number; finalH: number };
-  } | null>(null);
 
   // Sync prop changes
   useEffect(() => {
@@ -78,7 +73,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
     setImageLoadError(false);
   }, [photoUrl]);
 
-  // Client-side validation, 500x500 center-crop, and compression before upload
+  // Client-side validation, 500x500 center-crop, compression, and direct upload
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -87,40 +82,63 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
     setErrorMsg("");
     setSuccessMsg("");
 
-    // 1. Validate file extension and MIME type: JPG, JPEG, PNG, WebP
-    const validTypes = ["image/jpeg", "image/png", "image/webp"];
-    const extMatch = file.name.match(/\.(jpe?g|png|webp)$/i);
-    if (!validTypes.includes(file.type) && !extMatch) {
-      setErrorMsg("Invalid file type. Supported formats: JPG, JPEG, PNG, and WebP.");
+    // 1. Validate file extension or MIME type
+    const validTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg", "image/gif"];
+    const extMatch = file.name.match(/\.(jpe?g|png|webp|gif)$/i);
+    if (!validTypes.includes(file.type.toLowerCase()) && !extMatch && !file.type.startsWith("image/")) {
+      setErrorMsg("Supported photo formats: JPG, JPEG, PNG, and WebP.");
       return;
     }
 
-    // 2. Maximum upload size: 2 MB
-    const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
-    if (file.size > MAX_SIZE) {
+    // 2. Maximum original upload size: 15 MB
+    const MAX_ORIGINAL_SIZE = 15 * 1024 * 1024;
+    if (file.size > MAX_ORIGINAL_SIZE) {
       setErrorMsg(
-        `File size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds the maximum upload limit of 2 MB.`
+        `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds limit of 15 MB.`
       );
       return;
     }
 
     setIsProcessing(true);
+    setIsUploading(true);
 
     try {
+      // Compress and center-crop to 500 x 500 px
       const result = await processAndCompressTo500x500(file);
-      setStagedFile({
-        file: result.blob,
-        previewUrl: result.dataUrl,
-        originalName: file.name,
-        originalSize: file.size,
-        compressedSize: result.blob.size,
-        dimensions: result.dimensions,
+
+      // Prepare multipart form data
+      const formData = new FormData();
+      const ext = result.outputFormat === "image/png" ? ".png" : ".jpg";
+      const safeFilename = `${(grn || "patient").replace(/[^a-zA-Z0-9_-]/g, "_")}_avatar${ext}`;
+      formData.append("file", result.blob, safeFilename);
+
+      const targetGrn =
+        grn && grn.trim() && grn.trim().toLowerCase() !== "me"
+          ? grn.trim()
+          : (user?.grn || "me");
+
+      const res = await apiFetch(`/api/v1/patients/${encodeURIComponent(targetGrn)}/photo`, {
+        method: "POST",
+        body: formData,
       });
-      setShowConfirmUploadModal(true);
+
+      if (res.ok) {
+        const data = await res.json();
+        const updatedUrl = data.photo_url || result.dataUrl;
+        setCurrentPhoto(updatedUrl);
+        setImageLoadError(false);
+        setSuccessMsg("Photo updated successfully!");
+        if (onPhotoUpdated) onPhotoUpdated(updatedUrl);
+        setTimeout(() => setSuccessMsg(""), 4000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setErrorMsg(err.detail || "Failed to upload profile photo.");
+      }
     } catch (err: any) {
-      setErrorMsg(err.message || "Failed to process image.");
+      setErrorMsg(err.message || "Network error occurred while uploading photograph.");
     } finally {
       setIsProcessing(false);
+      setIsUploading(false);
     }
   };
 
@@ -130,7 +148,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
   ): Promise<{
     blob: Blob;
     dataUrl: string;
-    dimensions: { originalW: number; originalH: number; finalW: number; finalH: number };
+    outputFormat: string;
   }> => {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -150,22 +168,21 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
           return;
         }
 
-        // Enable high-quality image smoothing
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
 
         // Center crop calculation to 1:1 square
-        const origW = img.naturalWidth;
-        const origH = img.naturalHeight;
+        const origW = img.naturalWidth || img.width;
+        const origH = img.naturalHeight || img.height;
         const minSide = Math.min(origW, origH);
         const sx = (origW - minSide) / 2;
         const sy = (origH - minSide) / 2;
 
         ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, TARGET_SIZE, TARGET_SIZE);
 
-        // Determine output format & quality for compression
-        const outputFormat = file.type === "image/png" ? "image/png" : "image/jpeg";
-        const quality = outputFormat === "image/png" ? undefined : 0.88;
+        const isPng = file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
+        const outputFormat = isPng ? "image/png" : "image/jpeg";
+        const quality = isPng ? undefined : 0.88;
 
         canvas.toBlob(
           (blob) => {
@@ -177,12 +194,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
             resolve({
               blob,
               dataUrl,
-              dimensions: {
-                originalW: origW,
-                originalH: origH,
-                finalW: TARGET_SIZE,
-                finalH: TARGET_SIZE,
-              },
+              outputFormat,
             });
           },
           outputFormat,
@@ -192,54 +204,11 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
 
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
-        reject(new Error("Unable to read image file. Please verify the file is not corrupted."));
+        reject(new Error("Unable to read image file. Please verify it is a valid photograph."));
       };
 
       img.src = objectUrl;
     });
-  };
-
-  // Perform backend upload and update PostgreSQL
-  const handleConfirmUpload = async () => {
-    if (!stagedFile) return;
-
-    setIsUploading(true);
-    setErrorMsg("");
-
-    try {
-      const formData = new FormData();
-      const filename = stagedFile.originalName.replace(/\.[^.]+$/, ".jpg");
-      formData.append("file", stagedFile.file, filename);
-
-      const targetGrn =
-        grn && grn.trim() && grn.trim().toLowerCase() !== "me"
-          ? grn.trim()
-          : (user?.grn || "me");
-
-      const res = await apiFetch(`/api/v1/patients/${encodeURIComponent(targetGrn)}/photo`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const updatedUrl = data.photo_url || stagedFile.previewUrl;
-        setCurrentPhoto(updatedUrl);
-        setImageLoadError(false);
-        setSuccessMsg("Profile photo updated successfully (500 × 500 px).");
-        setShowConfirmUploadModal(false);
-        setStagedFile(null);
-        if (onPhotoUpdated) onPhotoUpdated(updatedUrl);
-        setTimeout(() => setSuccessMsg(""), 3500);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setErrorMsg(err.detail || "Failed to upload profile photo.");
-      }
-    } catch {
-      setErrorMsg("Network error occurred while uploading photograph.");
-    } finally {
-      setIsUploading(false);
-    }
   };
 
   // Remove photo and reset to default avatar in PostgreSQL
@@ -260,10 +229,10 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
       if (res.ok) {
         setCurrentPhoto(null);
         setImageLoadError(false);
-        setSuccessMsg("Profile photograph removed. Default avatar restored.");
+        setSuccessMsg("Profile photo removed. Default avatar restored.");
         setShowDeleteConfirmModal(false);
         if (onPhotoUpdated) onPhotoUpdated(null);
-        setTimeout(() => setSuccessMsg(""), 3500);
+        setTimeout(() => setSuccessMsg(""), 4000);
       } else {
         const err = await res.json().catch(() => ({}));
         setErrorMsg(err.detail || "Failed to remove profile photo.");
@@ -279,21 +248,23 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
   const hasCustomPhoto = !!currentPhoto && !!resolvedPhotoSrc && !imageLoadError;
   const initial = (fullName ? fullName[0] : "P").toUpperCase();
 
+  const sizeClass = size === "small" ? "size-small" : size === "large" ? "size-large" : "";
+
   return (
-    <div className={`patient-photo-component-wrapper ${className}`}>
+    <div className={`patient-photo-component-wrapper ${sizeClass} ${className}`}>
       {/* Hidden File Input */}
       <input
         type="file"
         ref={fileInputRef}
         onChange={handleFileSelect}
-        accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+        accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/*"
         style={{ display: "none" }}
       />
 
-      {/* 120 × 120 px Circular Profile Image Frame */}
+      {/* Circular Profile Image Frame */}
       <div
         className={`patient-photo-circle-frame ${canEdit ? "can-edit" : ""}`}
-        title={canEdit ? "Click to set or change profile photo" : fullName}
+        title={canEdit ? "Click to upload or change profile photo" : fullName}
         onClick={() => {
           if (canEdit && !isProcessing && !isUploading) {
             fileInputRef.current?.click();
@@ -321,8 +292,8 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
         {/* Hover Camera Overlay when editable */}
         {canEdit && !isProcessing && !isUploading && (
           <div className="photo-camera-overlay">
-            <Camera size={20} />
-            <span>Set Photo</span>
+            <Camera size={18} />
+            <span>{hasCustomPhoto ? "Change" : "Upload"}</span>
           </div>
         )}
 
@@ -334,7 +305,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
         )}
       </div>
 
-      {/* Responsive Interactive Controls: Upload, Preview, Change, Remove */}
+      {/* Interactive Controls: Upload, Preview, Change, Remove */}
       {canEdit && (
         <div className="patient-photo-action-buttons">
           {!hasCustomPhoto ? (
@@ -343,10 +314,10 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
               className="photo-btn-primary"
               onClick={() => fileInputRef.current?.click()}
               disabled={isProcessing || isUploading}
-              title="Upload profile photo (Max 2 MB, 500×500 px)"
+              title="Upload profile photo (JPG, PNG, WebP)"
             >
               <Upload size={13} />
-              <span>Upload Photo</span>
+              <span>{isUploading ? "Uploading…" : "Upload Photo"}</span>
             </button>
           ) : (
             <div className="photo-btn-group">
@@ -362,7 +333,6 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
                 <Eye size={13} />
                 <span>View</span>
               </button>
-
               <button
                 type="button"
                 className="photo-btn-icon"
@@ -371,15 +341,14 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
                   fileInputRef.current?.click();
                 }}
                 disabled={isProcessing || isUploading}
-                title="Change photo (Max 2 MB, 500×500 px)"
+                title="Change photo"
               >
                 <Camera size={13} />
                 <span>Change</span>
               </button>
-
               <button
                 type="button"
-                className="photo-btn-icon danger"
+                className="photo-btn-icon text-danger"
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowDeleteConfirmModal(true);
@@ -395,7 +364,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
         </div>
       )}
 
-      {/* Status Messages */}
+      {/* Feedback Messages */}
       {errorMsg && (
         <div className="photo-status-notice error">
           <AlertCircle size={12} />
@@ -456,7 +425,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
                   <div className="photo-meta-info">
                     <p><strong>Permanent GRN:</strong> {grn}</p>
                     <p><strong>Storage:</strong> PostgreSQL Secure File Path</p>
-                    <p><strong>Styling:</strong> Circular frame, <code>object-fit: cover</code>, <code>object-position: center</code></p>
+                    <p><strong>Styling:</strong> Circular frame, <code>object-fit: cover</code></p>
                   </div>
                 </div>
               </div>
@@ -499,102 +468,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
         </div>
       )}
 
-      {/* MODAL 2: Pre-Upload Preview & Compression Confirmation */}
-      {showConfirmUploadModal && stagedFile && (
-        <div className="modal-backdrop" onClick={() => setShowConfirmUploadModal(false)}>
-          <div className="modal-content medium-modal photo-preview-modal-box" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <span className="eyebrow">XORA TECHNOLOGIES / IMAGE COMPRESSION & RESIZING</span>
-                <h2>Confirm Profile Photo Upload</h2>
-              </div>
-              <button className="close-btn" onClick={() => setShowConfirmUploadModal(false)}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="modal-body photo-preview-modal-body">
-              <div className="compression-stats-banner">
-                <CheckCircle2 size={18} className="text-success" />
-                <div>
-                  <strong>Compressed & Center-Cropped to 500 × 500 px Before Upload</strong>
-                  <div className="stats-row-small">
-                    <span>Original: <strong>{(stagedFile.originalSize / 1024).toFixed(0)} KB</strong> ({stagedFile.dimensions.originalW}×{stagedFile.dimensions.originalH} px)</span>
-                    <span className="arrow-sep">➔</span>
-                    <span>Upload: <strong>{(stagedFile.compressedSize / 1024).toFixed(0)} KB</strong> (500 × 500 px)</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="photo-preview-grid">
-                <div className="photo-preview-card">
-                  <div className="photo-preview-label">
-                    <span>Upload Dimensions</span>
-                    <span className="badge-pill">500 × 500 px</span>
-                  </div>
-                  <div className="photo-square-500-box">
-                    <img
-                      src={stagedFile.previewUrl}
-                      alt="Staged 500x500"
-                      className="photo-square-500-img"
-                    />
-                  </div>
-                </div>
-
-                <div className="photo-preview-card">
-                  <div className="photo-preview-label">
-                    <span>Display Dimensions</span>
-                    <span className="badge-pill">120 × 120 px</span>
-                  </div>
-                  <div className="photo-circle-120-box">
-                    <img
-                      src={stagedFile.previewUrl}
-                      alt="Circular 120x120"
-                      className="patient-photo-circle-img"
-                    />
-                  </div>
-                  <div className="photo-meta-info">
-                    <p>Circular frame applied with <code>object-fit: cover</code> and <code>object-position: center</code></p>
-                    <p>Supported: JPG, JPEG, PNG, WebP (Max 2 MB)</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setShowConfirmUploadModal(false);
-                  setStagedFile(null);
-                }}
-                disabled={isUploading}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handleConfirmUpload}
-                disabled={isUploading}
-              >
-                {isUploading ? (
-                  <>
-                    <RefreshCw size={14} className="spin-icon" /> Uploading 500×500 px…
-                  </>
-                ) : (
-                  <>
-                    <Upload size={14} /> Confirm & Upload Photo
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 3: Remove Photo Confirmation */}
+      {/* MODAL 2: Remove Photo Confirmation */}
       {showDeleteConfirmModal && (
         <div className="modal-backdrop" onClick={() => setShowDeleteConfirmModal(false)}>
           <div className="modal-content medium-modal" onClick={(e) => e.stopPropagation()}>
@@ -613,7 +487,7 @@ export const PatientProfilePhoto: React.FC<PatientProfilePhotoProps> = ({
                 Are you sure you want to remove the profile photograph for <strong>{fullName}</strong> ({grn})?
               </p>
               <p style={{ margin: 0, fontSize: "13px", color: "var(--slate-500)" }}>
-                The uploaded photograph file will be deleted and the record in PostgreSQL will be reset to the default healthcare avatar.
+                The photograph file will be deleted and your profile will be reset to the default healthcare avatar.
               </p>
             </div>
 

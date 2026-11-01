@@ -100,6 +100,7 @@ app = FastAPI(
 origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|192\.168\.\d+\.\d+)(:\d+)?$",
     allow_origins=[origin, "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
@@ -1632,7 +1633,7 @@ def link_patient_to_hospital(
         "grn": gp.grn
     }
 
-MAX_PHOTO_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB limit
+MAX_PHOTO_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB limit (enforced per requirements)
 
 @app.post("/api/v1/patients/me/photo")
 @app.post("/api/v1/patients/{grn}/photo")
@@ -1656,19 +1657,40 @@ async def upload_patient_photo(
     if not gp:
         raise HTTPException(status_code=404, detail="Patient GRN not found.")
 
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in [".jpg", ".jpeg", ".png", ".webp"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid photo format. Supported formats are JPG, JPEG, PNG, and WebP."
-        )
-
     contents = await file.read()
     if len(contents) > MAX_PHOTO_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
-            detail="File size exceeds maximum upload limit of 2 MB. Please select or compress an image under 2 MB."
+            detail=f"File size ({(len(contents) / (1024 * 1024)):.2f} MB) exceeds maximum upload limit of 2 MB."
         )
+
+    # Detect extension and validate image format
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in [".jpg", ".jpeg", ".png", ".webp"]:
+        ct = (file.content_type or "").lower()
+        if "png" in ct:
+            ext = ".png"
+        elif "webp" in ct:
+            ext = ".webp"
+        elif "jpeg" in ct or "jpg" in ct:
+            ext = ".jpg"
+        else:
+            try:
+                test_img = Image.open(io.BytesIO(contents))
+                fmt = (test_img.format or "").lower()
+                if fmt in ["jpeg", "jpg"]:
+                    ext = ".jpg"
+                elif fmt == "png":
+                    ext = ".png"
+                elif fmt == "webp":
+                    ext = ".webp"
+                else:
+                    ext = ".jpg"
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid photo format. Supported formats are JPG, JPEG, PNG, and WebP."
+                )
 
     # Process and crop/resize to exactly 500x500 px using Pillow
     try:
@@ -1795,7 +1817,7 @@ def get_patient_photo(grn: str | None = None, db: Session = Depends(get_db)):
         candidate = os.path.join(PHOTOS_DIR, f"{gp.grn}_avatar{ext}")
         if os.path.exists(candidate):
             media_type = "image/png" if ext == ".png" else ("image/webp" if ext == ".webp" else "image/jpeg")
-            return FileResponse(candidate, media_type=media_type, headers={"Cache-Control": "public, max-age=60"})
+            return FileResponse(candidate, media_type=media_type, headers={"Cache-Control": "no-cache, must-revalidate"})
 
     # Return default circular SVG avatar with medical silhouette and initial
     initial = (gp.full_name[0] if gp.full_name else 'P').upper()
